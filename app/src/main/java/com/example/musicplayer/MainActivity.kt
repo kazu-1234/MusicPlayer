@@ -37,15 +37,18 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Refresh
@@ -57,7 +60,6 @@ import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
-import androidx.compose.material.icons.filled.List
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -72,6 +74,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -710,7 +713,7 @@ fun MusicPlayerScreen(
                          Column {
                              Text("Music Player")
                              if (isScanning) {
-                                 Text("スキャン中: ${scanCount}曲 ($scanTotal)", style = MaterialTheme.typography.bodySmall)
+                                 Text("読み込み中: ${scanCount}曲", style = MaterialTheme.typography.bodySmall)
                                  LinearProgressIndicator(progress = { scanProgress }, modifier = Modifier.fillMaxWidth().height(2.dp))
                              }
                          }
@@ -1043,6 +1046,9 @@ fun FullScreenPlayer(
     val albumArt = rememberAlbumArt(context, currentSong.uri)
     // キュー表示用の状態
     var showQueue by remember { mutableStateOf(false) }
+    // ドラッグ中のアイテムインデックス
+    var draggedIndex by remember { mutableStateOf<Int?>(null) }
+    var dragOffset by remember { mutableStateOf(0f) }
     
     // キュー表示ダイアログ
     if (showQueue) {
@@ -1050,27 +1056,71 @@ fun FullScreenPlayer(
             onDismissRequest = { showQueue = false },
             title = { Text("再生キュー (${playingQueue.size}曲)") },
             text = {
-                LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
-                    items(playingQueue.size) { index ->
-                        val song = playingQueue[index]
+                Column(modifier = Modifier.heightIn(max = 400.dp)) {
+                    playingQueue.forEachIndexed { index, song ->
                         val isCurrent = song.uri == currentSong.uri
+                        val isDragging = draggedIndex == index
+                        
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .offset { IntOffset(0, if (isDragging) dragOffset.toInt() else 0) }
                                 .background(
-                                    if (isCurrent) MaterialTheme.colorScheme.primaryContainer
-                                    else Color.Transparent
+                                    when {
+                                        isDragging -> MaterialTheme.colorScheme.secondaryContainer
+                                        isCurrent -> MaterialTheme.colorScheme.primaryContainer
+                                        else -> Color.Transparent
+                                    }
                                 )
                                 .padding(vertical = 8.dp, horizontal = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            // ドラッグハンドル
+                            Icon(
+                                Icons.Default.DragHandle,
+                                contentDescription = "ドラッグ",
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .pointerInput(index) {
+                                        detectDragGestures(
+                                            onDragStart = {
+                                                draggedIndex = index
+                                                dragOffset = 0f
+                                            },
+                                            onDragEnd = {
+                                                // ドラッグ終了時に移動先を計算
+                                                val itemHeight = 56 // 概算の行高さ
+                                                val moveBy = (dragOffset / itemHeight).toInt()
+                                                val targetIndex = (index + moveBy).coerceIn(0, playingQueue.size - 1)
+                                                if (targetIndex != index) {
+                                                    onReorder(index, targetIndex)
+                                                }
+                                                draggedIndex = null
+                                                dragOffset = 0f
+                                            },
+                                            onDragCancel = {
+                                                draggedIndex = null
+                                                dragOffset = 0f
+                                            },
+                                            onDrag = { change, dragAmount ->
+                                                change.consume()
+                                                dragOffset += dragAmount.y
+                                            }
+                                        )
+                                    },
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            
+                            Spacer(modifier = Modifier.width(8.dp))
+                            
                             // 曲番号
                             Text(
                                 "${index + 1}",
-                                modifier = Modifier.width(32.dp),
+                                modifier = Modifier.width(28.dp),
                                 style = MaterialTheme.typography.bodySmall,
                                 textAlign = TextAlign.Center
                             )
+                            
                             // 曲情報
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
@@ -1087,36 +1137,6 @@ fun FullScreenPlayer(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
-                            }
-                            // 上へ移動ボタン
-                            if (index > 0) {
-                                IconButton(
-                                    onClick = { onReorder(index, index - 1) },
-                                    modifier = Modifier.size(32.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Default.ArrowUpward,
-                                        contentDescription = "上へ",
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            } else {
-                                Spacer(modifier = Modifier.size(32.dp))
-                            }
-                            // 下へ移動ボタン
-                            if (index < playingQueue.size - 1) {
-                                IconButton(
-                                    onClick = { onReorder(index, index + 1) },
-                                    modifier = Modifier.size(32.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Default.ArrowDownward,
-                                        contentDescription = "下へ",
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            } else {
-                                Spacer(modifier = Modifier.size(32.dp))
                             }
                         }
                         if (index < playingQueue.size - 1) {
@@ -1320,7 +1340,7 @@ fun FullScreenPlayer(
             ) {
                 IconButton(onClick = { showQueue = true }) {
                     Icon(
-                        Icons.Default.List,
+                        Icons.AutoMirrored.Filled.List,
                         contentDescription = "Queue",
                         modifier = Modifier.size(28.dp),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
