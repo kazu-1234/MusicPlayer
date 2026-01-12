@@ -85,7 +85,7 @@ import java.util.Collections
 
 // --- アプリ情報 ---
 // v2.0.4: プログレス表示の復活、スキャン高速化（メタデータ取得なし）は維持
-private const val APP_VERSION = "2.0.4"
+private    const val APP_VERSION = "v2.0.5"
 private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-12 v28"
 
 // --- データ構造の定義 ---
@@ -1862,7 +1862,9 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
                         val displayName = cursor.getString(cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME))
                         val docUri = DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId)
                         if (mimeType != DocumentsContract.Document.MIME_TYPE_DIR) {
-                            if (mimeType.startsWith("audio/") || mimeType == "application/ogg") {
+                            val ext = displayName.substringAfterLast('.', "").lowercase()
+                            if (mimeType.startsWith("audio/") || mimeType == "application/ogg" || 
+                                setOf("mp3", "m4a", "flac", "wav", "aac", "ogg").contains(ext)) {
                                 processedCount++
                                 if (processedCount % 10 == 0) {
                                     onProgress(processedCount.toFloat().coerceAtMost(totalFiles.toFloat()) / totalFiles.toFloat())
