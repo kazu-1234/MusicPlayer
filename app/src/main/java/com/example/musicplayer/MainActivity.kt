@@ -85,7 +85,7 @@ import java.util.Collections
 
 // --- アプリ情報 ---
 // v2.0.4: プログレス表示の復活、スキャン高速化（メタデータ取得なし）は維持
-private    const val APP_VERSION = "v2.0.6"
+private    const val APP_VERSION = "v2.0.7"
 private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-12 v28"
 
 // --- データ構造の定義 ---
@@ -1257,7 +1257,6 @@ fun SettingsScreen(onNavigateBack: () -> Unit) {
                 HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
                 Text("バージョン情報", style = MaterialTheme.typography.titleLarge)
                 Text("App Version: $APP_VERSION")
-                Text("App Version: $APP_VERSION")
             }
         }
     }
@@ -1775,14 +1774,20 @@ private suspend fun countFilesInDirectory(context: Context, directoryUri: Uri): 
             count = rootFile!!.walk()
                 .filter { it.isFile && (it.extension.equals("mp3", true) || it.extension.equals("m4a", true) || it.extension.equals("flac", true) || it.extension.equals("wav", true) || it.extension.equals("aac", true) || it.extension.equals("ogg", true)) }
                 .count()
-            return@withContext count
+            
+            // 重要: 実機制限などで0件の場合はフォールバックする
+            if (count > 0) {
+                return@withContext count
+            } else {
+                useFileApi = false // フォールバックトリガー
+            }
         } catch (e: Exception) {
             e.printStackTrace()
             useFileApi = false
         }
     }
 
-    // 従来の方法（バックアップ）
+    // 従来の方法（バックアップ）: SAFを使用
     val contentResolver = context.contentResolver
     val documentsTree = DocumentsContract.buildDocumentUriUsingTree(directoryUri, DocumentsContract.getTreeDocumentId(directoryUri))
     fun traverse(currentUri: Uri) {
@@ -1842,44 +1847,34 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
                 .filter { it.isFile && (it.extension.equals("mp3", true) || it.extension.equals("m4a", true) || it.extension.equals("flac", true) || it.extension.equals("wav", true) || it.extension.equals("aac", true) || it.extension.equals("ogg", true)) }
                 .toList()
             
+            
             // val total = allFiles.size // 以前の総数を使用（walk().toList()しているので正確）
             val total = allFiles.size 
-            allFiles.forEach { file ->
-                processedCount++
-                if (processedCount % 10 == 0) { // UI更新頻度を調整
-                    onProgress(processedCount.toFloat().coerceAtMost(total.toFloat()) / total.toFloat())
-                }
-                
-                try {
-                    val filePath = file.absolutePath
-                    val title = file.nameWithoutExtension
-                    
-                    // 高速化のため、スキャン時のメタデータ取得（MediaMetadataRetriever）を廃止
-                    // ファイル名を表示タイトルとし、再生時に必要ならメタデータを取得する設計とする
-                    // ユーザー要望: スキャン時間の短縮、「そもそもスキャン（詳細情報取得）が必要か？」への対応
-                    
-                    var songTitle = title
-                    var songArtist = "Unknown Artist"
-                    var songAlbum = "Unknown Album"
-                    var trackNumber = 0
-
-                    /* メタデータ取得は重いためスキップ
-                    try {
-                        retriever.setDataSource(filePath)
-                        songTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE) ?: title
-                        songArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST) ?: "Unknown Artist"
-                        songAlbum = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM) ?: "Unknown Album"
-                        val trackString = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
-                        trackNumber = trackString?.substringBefore("/")?.toIntOrNull() ?: 0
-                    } catch (e: Exception) {
-                        // メタデータ取得失敗時はデフォルト値
+            
+            if (total > 0) {
+                 allFiles.forEach { file ->
+                    processedCount++
+                    if (processedCount % 10 == 0) { // UI更新頻度を調整
+                        onProgress(processedCount.toFloat().coerceAtMost(total.toFloat()) / total.toFloat())
                     }
-                    */
-
-                    songList.add(Song(Uri.fromFile(file), file.name, songTitle, songArtist, songAlbum, 0, trackNumber, directoryUri))
                     
-                } catch (e: Exception) { e.printStackTrace() }
+                    try {
+                        val filePath = file.absolutePath
+                        val title = file.nameWithoutExtension
+                        
+                        var songTitle = title
+                        var songArtist = "Unknown Artist"
+                        var songAlbum = "Unknown Album"
+                        var trackNumber = 0
+
+                        songList.add(Song(Uri.fromFile(file), file.name, songTitle, songArtist, songAlbum, 0, trackNumber, directoryUri))
+                        
+                    } catch (e: Exception) { e.printStackTrace() }
+                }
+            } else {
+                 useFileApi = false // 0件の場合はフォールバック
             }
+
         } catch (e: Exception) {
             e.printStackTrace()
             // 失敗時はDocumentFileロジックへ（下記）
@@ -1889,6 +1884,9 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
 
     if (!useFileApi) {
         // 従来のDocumentFileを使用したスキャン（低速だが確実）
+        // 既存のtotalFilesが0の場合、プログレス計算でNaNになるのを防ぐ
+        val effectiveTotal = if (totalFiles > 0) totalFiles else 1
+
         val contentResolver = context.contentResolver
         val documentsTree = DocumentsContract.buildDocumentUriUsingTree(directoryUri, DocumentsContract.getTreeDocumentId(directoryUri))
         fun traverseDirectory(currentUri: Uri) {
@@ -1906,7 +1904,7 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
                                 setOf("mp3", "m4a", "flac", "wav", "aac", "ogg").contains(ext)) {
                                 processedCount++
                                 if (processedCount % 10 == 0) {
-                                    onProgress(processedCount.toFloat().coerceAtMost(totalFiles.toFloat()) / totalFiles.toFloat())
+                                    onProgress(processedCount.toFloat().coerceAtMost(effectiveTotal.toFloat()) / effectiveTotal.toFloat())
                                 }
                                 
                                 // 高速化のためメタデータ取得をスキップ
