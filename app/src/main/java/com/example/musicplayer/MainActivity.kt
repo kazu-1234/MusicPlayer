@@ -84,8 +84,8 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.0.2: コード整理、デフォルト設定確認
-private const val APP_VERSION = "2.0.2"
+// v2.0.3: スキャンロジックの簡素化（事前カウント廃止）
+private const val APP_VERSION = "2.0.3"
 private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-12 v28"
 
 // --- データ構造の定義 ---
@@ -1066,10 +1066,8 @@ fun SettingsScreen(onNavigateBack: () -> Unit) {
                     saveUriList(context, KEY_SOURCE_FOLDER_URIS, currentFolders.toList())
                     sourceFolders = currentFolders.toList()
 
-                    val totalFiles = countFilesInDirectory(context, uri)
-                    val newSongs = getAudioFilesFromDirectory(context, uri, totalFiles) { progress ->
-                        launch(Dispatchers.Main) { scanProgress = progress }
-                    }
+                    // 事前カウント（countFilesInDirectory）を廃止し、即時読み込みへ変更
+                    val newSongs = getAudioFilesFromDirectory(context, uri)
                     val existingSongs = loadLibraryFromFile(context) ?: emptyList()
                     val combinedSongs = (existingSongs + newSongs).distinctBy { it.uri }
                     saveLibraryToFile(context, combinedSongs)
@@ -1114,8 +1112,10 @@ fun SettingsScreen(onNavigateBack: () -> Unit) {
                     }
                 }
                 if (isScanning) {
-                    LinearProgressIndicator(progress = { scanProgress })
-                    Text("スキャン中... ${(scanProgress * 100).toInt()}%")
+                if (isScanning) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth()) // 不確定モード（進捗率なし）
+                    Text("読み込み中...")
+                }
                 }
                 HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
             }
@@ -1760,10 +1760,10 @@ private suspend fun countFilesInDirectory(context: Context, directoryUri: Uri): 
     }
     traverse(documentsTree); return@withContext count
 }
-private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: Uri, totalFiles: Int, onProgress: (Float) -> Unit): List<Song> = withContext(Dispatchers.IO) {
+private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: Uri): List<Song> = withContext(Dispatchers.IO) {
     val songList = mutableListOf<Song>()
     val retriever = MediaMetadataRetriever()
-    var processedCount = 0
+    // var processedCount = 0 // 進捗計算用（削除）
 
     // 高速化: Uriから実際のファイルパスを推測してjava.io.Fileを使用する
     var useFileApi = false
@@ -1801,12 +1801,10 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
                 .filter { it.isFile && (it.extension.equals("mp3", true) || it.extension.equals("m4a", true) || it.extension.equals("flac", true) || it.extension.equals("wav", true) || it.extension.equals("aac", true) || it.extension.equals("ogg", true)) }
                 .toList()
             
-            val total = allFiles.size
+            // val total = allFiles.size // 使用しない
             allFiles.forEach { file ->
-                processedCount++
-                if (processedCount % 10 == 0) { // UI更新頻度を調整
-                    onProgress(processedCount.toFloat().coerceAtMost(total.toFloat()) / total.toFloat())
-                }
+                // processedCount++
+                // if (processedCount % 10 == 0) { ... } // 削除
                 
                 try {
                     val filePath = file.absolutePath
@@ -1860,10 +1858,8 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
                         val docUri = DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId)
                         if (mimeType != DocumentsContract.Document.MIME_TYPE_DIR) {
                             if (mimeType.startsWith("audio/") || mimeType == "application/ogg") {
-                                processedCount++
-                                if (processedCount % 10 == 0) {
-                                    onProgress(processedCount.toFloat().coerceAtMost(totalFiles.toFloat()) / totalFiles.toFloat())
-                                }
+                                // processedCount++ // 削除
+                                // if (processedCount % 10 == 0) { ... } // 削除
                                 
                                 // 高速化のためメタデータ取得をスキップ
                                 var title = displayName
