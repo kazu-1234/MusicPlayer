@@ -1742,8 +1742,9 @@ private suspend fun loadPlaylistsFromFile(context: Context, allSongs: List<Song>
         return@withContext null
     }
 }
+private suspend fun countFilesInDirectory(context: Context, directoryUri: Uri): Int = withContext(Dispatchers.IO) {
     var count = 0
-    
+
     // 高速化: Uriから実際のファイルパスを推測してjava.io.Fileを使用する
     var useFileApi = false
     var rootFile: File? = null
