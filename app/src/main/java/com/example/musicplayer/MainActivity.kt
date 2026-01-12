@@ -38,6 +38,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -1107,14 +1108,14 @@ fun FullScreenPlayer(
                                 )
                             }
                             
-                            // ドラッグハンドル（右側）
+                            // ドラッグハンドル（右側）- 長押しでドラッグ開始
                             Icon(
                                 Icons.Default.DragHandle,
                                 contentDescription = "ドラッグ",
                                 modifier = Modifier
-                                    .size(24.dp)
+                                    .size(32.dp)
                                     .pointerInput(index) {
-                                        detectDragGestures(
+                                        detectDragGesturesAfterLongPress(
                                             onDragStart = {
                                                 draggedIndex = index
                                                 dragOffset = 0f
