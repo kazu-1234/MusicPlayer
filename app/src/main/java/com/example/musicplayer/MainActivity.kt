@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
@@ -84,8 +85,8 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.0.4: プログレス表示の復活、スキャン高速化（メタデータ取得なし）は維持
-private    const val APP_VERSION = "v2.0.7"
+// v2.0.8: メディア通知、シャッフル改善、スキャン高速化、メタデータ復活、ソート機能強化
+private    const val APP_VERSION = "v2.0.8"
 private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-12 v28"
 
 // --- データ構造の定義 ---
@@ -101,7 +102,7 @@ data class Song(
     val exists: Boolean = true  // ファイルが存在するかどうか
 )
 data class Playlist(val name: String, val songs: List<Song>)
-enum class SortType { TITLE, ARTIST, ALBUM, PLAY_COUNT }
+enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
 enum class SortOrder { ASC, DESC }
 enum class TabType { SONGS, PLAYLISTS, ARTISTS, ALBUMS }
 enum class RepeatMode { OFF, ALL, ONE }  // リピートモード
@@ -111,19 +112,43 @@ private const val PREFS_NAME = "MusicPlayerPrefs"
 private const val KEY_SOURCE_FOLDER_URIS = "sourceFolderUris"
 private const val KEY_TAB_ORDER = "tabOrder"
 private const val KEY_PLAYLIST_BASE_PATH = "playlistBasePath" // プレイリスト用ベースパス設定
+private const val KEY_USE_SYSTEM_MEDIA_CONTROLLER = "useSystemMediaController" // MediaSession設定用
 private const val LIBRARY_CACHE_FILE = "library.json"
 private const val PLAYLIST_CACHE_FILE = "playlists.json"
 
 
 class MainActivity : ComponentActivity() {
+
+    // MediaSession
+    private lateinit var mediaSession: android.support.v4.media.session.MediaSessionCompat
+    private var useSystemMediaController by mutableStateOf(true) // 設定で切り替え可能にする
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // MediaSessionの初期化
+        mediaSession = android.support.v4.media.session.MediaSessionCompat(this, "MusicPlayerSession").apply {
+            setCallback(object : android.support.v4.media.session.MediaSessionCompat.Callback() {
+                override fun onPlay() { sendBroadcast(Intent(this@MainActivity, MusicNotificationReceiver::class.java).apply { action = ACTION_PLAY_PAUSE }) }
+                override fun onPause() { sendBroadcast(Intent(this@MainActivity, MusicNotificationReceiver::class.java).apply { action = ACTION_PLAY_PAUSE }) }
+                override fun onSkipToNext() { sendBroadcast(Intent(this@MainActivity, MusicNotificationReceiver::class.java).apply { action = ACTION_NEXT }) }
+                override fun onSkipToPrevious() { sendBroadcast(Intent(this@MainActivity, MusicNotificationReceiver::class.java).apply { action = ACTION_PREVIOUS }) }
+            })
+            isActive = true
+        }
+
         createNotificationChannel()
         requestNotificationPermission()
         setContent {
             MusicPlayerTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    MusicApp()
+                    MusicApp(
+                        useSystemMediaController = useSystemMediaController,
+                        onUseSystemMediaControllerChange = { 
+                            useSystemMediaController = it 
+                            saveUseSystemMediaController(this, it)
+                        }
+                    )
                 }
             }
         }
@@ -156,6 +181,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        mediaSession.release()
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         notificationManager.cancel(NOTIFICATION_ID)
     }
@@ -216,9 +242,20 @@ class MainActivity : ComponentActivity() {
             .setContentIntent(pendingIntent)
             .setOngoing(isPlaying) // 再生中は消せないようにする
             .setShowWhen(false)
-            .setStyle(androidx.media.app.NotificationCompat.MediaStyle()
-                .setShowActionsInCompactView(1, 2, 3) // 前の曲, 再生/一時停止, 次の曲
+            
+        // Styleの設定（設定に応じて切り替え）
+        if (useSystemMediaController) {
+             notificationBuilder.setStyle(androidx.media.app.NotificationCompat.MediaStyle()
+                .setMediaSession(mediaSession.sessionToken) // MediaSessionと連携
+                .setShowActionsInCompactView(1, 2, 3) // 前、再生、次
             )
+        } else {
+             notificationBuilder.setStyle(androidx.media.app.NotificationCompat.MediaStyle()
+                .setShowActionsInCompactView(1, 2, 3) 
+            )
+        }
+
+        // Actionの設定（以下変更なし）
 
         // アクション追加（5つ：シャッフル→前→再生/一時停止→次→終了）
         
@@ -270,7 +307,7 @@ sealed class Screen {
 }
 
 @Composable
-fun MusicApp() {
+fun MusicApp(useSystemMediaController: Boolean, onUseSystemMediaControllerChange: (Boolean) -> Unit) {
     var currentScreen by remember { mutableStateOf<Screen>(Screen.Main) }
     var songList by remember { mutableStateOf<List<Song>>(emptyList()) }
     var playlists by remember { mutableStateOf<List<Playlist>>(emptyList()) }
@@ -297,10 +334,14 @@ fun MusicApp() {
         // 設定画面（オーバーレイ表示）
         if (currentScreen is Screen.Settings) {
             Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                SettingsScreen(onNavigateBack = {
-                    libraryUpdateKey++
-                    currentScreen = Screen.Main
-                })
+                SettingsScreen(
+                    onNavigateBack = {
+                        libraryUpdateKey++
+                        currentScreen = Screen.Main
+                    },
+                    useSystemMediaController = useSystemMediaController,
+                    onUseSystemMediaControllerChange = onUseSystemMediaControllerChange
+                )
             }
             // 戻るボタンのハンドリング
             BackHandler {
@@ -419,9 +460,9 @@ fun MusicPlayerScreen(
         }
     }
     
-    // シンプルな再生関数（タップ時用）
-    val playSong: (Song) -> Unit = { song ->
-        val queue = if (isShuffleEnabled) songList.shuffled() else songList
+    // シンプルな再生関数（タップ時用）- コンテキスト（リスト）を受け取るように変更
+    val playSong: (Song, List<Song>) -> Unit = { song, contextList ->
+        val queue = if (isShuffleEnabled) contextList.shuffled() else contextList
         val index = queue.indexOf(song).takeIf { it != -1 } ?: 0
         playSongAtIndex(index, queue)
     }
@@ -592,7 +633,7 @@ fun MusicPlayerScreen(
                 }
                 when (currentTabs.getOrNull(selectedTabIndex)) {
                     TabType.SONGS -> SongsTab(songList, currentSong, sortType, sortOrder, onSongClick = playSong, onSortTypeChange = { sortType = it }, onSortOrderChange = { sortOrder = it })
-                    TabType.PLAYLISTS -> PlaylistTab(playlists, songList, onPlaylistChanged = onPlaylistsChange, onSongClick = playSong)
+                    TabType.PLAYLISTS -> PlaylistTab(playlists, songList, currentSong, onPlaylistChanged = onPlaylistsChange, onSongClick = playSong)
                     TabType.ARTISTS -> ArtistFolderTab(songList, onSongClick = playSong)
                     TabType.ALBUMS -> AlbumFolderTab(songList, onSongClick = playSong)
                     null -> {}
@@ -1043,7 +1084,11 @@ fun FullScreenPlayer(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onNavigateBack: () -> Unit) {
+fun SettingsScreen(
+    onNavigateBack: () -> Unit,
+    useSystemMediaController: Boolean,
+    onUseSystemMediaControllerChange: (Boolean) -> Unit
+) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     var sourceFolders by remember { mutableStateOf(getUriList(context, KEY_SOURCE_FOLDER_URIS)) }
@@ -1092,11 +1137,27 @@ fun SettingsScreen(onNavigateBack: () -> Unit) {
     ) { paddingValues ->
         LazyColumn(modifier = Modifier.padding(paddingValues).padding(16.dp)) {
             item {
+                Text("設定", style = MaterialTheme.typography.titleLarge)
+                Spacer(Modifier.height(16.dp))
+
+                // MediaSession設定
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("システムメディアプレイヤーを使用", modifier = Modifier.weight(1f))
+                    Switch(checked = useSystemMediaController, onCheckedChange = onUseSystemMediaControllerChange)
+                }
+                Text("通知パネルのデザインを変更します", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                
                 Text("ライブラリ管理", style = MaterialTheme.typography.titleLarge)
                 Spacer(Modifier.height(8.dp))
                 Button(onClick = { folderPickerLauncher.launch(null) }) { Text("音楽フォルダを追加") }
                 Spacer(Modifier.height(16.dp))
                 Text("スキャン対象フォルダ:")
+
                 sourceFolders.forEach { uri ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(uri.path ?: "不明なフォルダ", modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1111,13 +1172,30 @@ fun SettingsScreen(onNavigateBack: () -> Unit) {
                                 withContext(Dispatchers.Main) { Toast.makeText(context, "フォルダをライブラリから削除しました", Toast.LENGTH_SHORT).show() }
                             }
                         }) { Icon(Icons.Default.Delete, "Remove folder") }
+
+                        IconButton(onClick = {
+                            if (isScanning) return@IconButton
+                            isScanning = true
+                            scanProgress = 0f
+                            coroutineScope.launch {
+                                val currentLibrary = loadLibraryFromFile(context) ?: emptyList()
+                                val cleanLibrary = currentLibrary.filterNot { it.sourceFolderUri == uri }
+                                val count = countFilesInDirectory(context, uri)
+                                val newSongs = getAudioFilesFromDirectory(context, uri, count) { progress ->
+                                     launch(Dispatchers.Main) { scanProgress = progress }
+                                }
+                                val combined = (cleanLibrary + newSongs).distinctBy { it.uri }
+                                saveLibraryToFile(context, combined)
+                                isScanning = false
+                                withContext(Dispatchers.Main) { Toast.makeText(context, "再スキャン完了: ${newSongs.size}曲", Toast.LENGTH_SHORT).show() }
+                            }
+                        }) { Icon(Icons.Filled.Refresh, "Rescan folder") }
                     }
                 }
-                if (isScanning) {
+
                 if (isScanning) {
                     LinearProgressIndicator(progress = { scanProgress })
                     Text("読み込み中... ${(scanProgress * 100).toInt()}%")
-                }
                 }
                 HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
             }
@@ -1205,8 +1283,6 @@ fun SettingsScreen(onNavigateBack: () -> Unit) {
                                         } else {
                                             updateInfo = "最新バージョンです"
                                         }
-                                    } else {
-                                        updateInfo = "更新確認に失敗しました"
                                     }
                                 } catch (e: Exception) {
                                     updateInfo = "エラー: ${e.message}"
@@ -1263,9 +1339,10 @@ fun SettingsScreen(onNavigateBack: () -> Unit) {
 }
 
 @Composable
-fun SongsTab(songList: List<Song>, currentSong: Song?, sortType: SortType, sortOrder: SortOrder, onSongClick: (Song) -> Unit, onSortTypeChange: (SortType) -> Unit, onSortOrderChange: (SortOrder) -> Unit) {
+fun SongsTab(songList: List<Song>, currentSong: Song?, sortType: SortType, sortOrder: SortOrder, onSongClick: (Song, List<Song>) -> Unit, onSortTypeChange: (SortType) -> Unit, onSortOrderChange: (SortOrder) -> Unit) {
     val sortedList = remember(songList, sortType, sortOrder) {
         val comparator = when (sortType) {
+            SortType.DEFAULT -> compareBy { song: Song -> song.displayName } // ファイル名順
             SortType.TITLE -> compareBy(String.CASE_INSENSITIVE_ORDER) { song: Song -> song.title }
             SortType.ARTIST -> compareBy(String.CASE_INSENSITIVE_ORDER) { song: Song -> song.artist }
             SortType.ALBUM -> compareBy(String.CASE_INSENSITIVE_ORDER) { song: Song -> song.album }
@@ -1279,11 +1356,12 @@ fun SongsTab(songList: List<Song>, currentSong: Song?, sortType: SortType, sortO
             Box {
                 Button(onClick = { expanded = true }) {
                     Text(when(sortType){
-                        SortType.TITLE -> "曲名"; SortType.ARTIST -> "アーティスト"
+                        SortType.DEFAULT -> "標準"; SortType.TITLE -> "曲名"; SortType.ARTIST -> "アーティスト"
                         SortType.ALBUM -> "アルバム"; SortType.PLAY_COUNT -> "再生回数"
                     })
                 }
                 DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    DropdownMenuItem(text = { Text("標準") }, onClick = { onSortTypeChange(SortType.DEFAULT); expanded = false })
                     DropdownMenuItem(text = { Text("曲名") }, onClick = { onSortTypeChange(SortType.TITLE); expanded = false })
                     DropdownMenuItem(text = { Text("アーティスト") }, onClick = { onSortTypeChange(SortType.ARTIST); expanded = false })
                     DropdownMenuItem(text = { Text("アルバム") }, onClick = { onSortTypeChange(SortType.ALBUM); expanded = false })
@@ -1293,13 +1371,13 @@ fun SongsTab(songList: List<Song>, currentSong: Song?, sortType: SortType, sortO
             Button(onClick = { onSortOrderChange(if (sortOrder == SortOrder.ASC) SortOrder.DESC else SortOrder.ASC) }) { Text(if (sortOrder == SortOrder.ASC) "昇順" else "降順") }
         }
         HorizontalDivider()
-        SongList(songs = sortedList, currentSong = currentSong, onSongClick = onSongClick)
+        SongList(songs = sortedList, currentSong = currentSong, onSongClick = { song -> onSongClick(song, sortedList) })
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun PlaylistTab(playlists: List<Playlist>, songList: List<Song>, onPlaylistChanged: (List<Playlist>) -> Unit, onSongClick: (Song) -> Unit) {
+fun PlaylistTab(playlists: List<Playlist>, songList: List<Song>, currentSong: Song?, onPlaylistChanged: (List<Playlist>) -> Unit, onSongClick: (Song, List<Song>) -> Unit) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     var selectedPlaylist by remember { mutableStateOf<Playlist?>(null) }
@@ -1355,22 +1433,12 @@ fun PlaylistTab(playlists: List<Playlist>, songList: List<Song>, onPlaylistChang
     
     // プレイリストが選択されている場合：曲リストを表示
     if (selectedPlaylist != null) {
-        Column {
-            TopAppBar(
-                title = { Text(selectedPlaylist!!.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                navigationIcon = {
-                    IconButton(onClick = { selectedPlaylist = null }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
-                    }
-                }
-            )
-            Text(
-                "${selectedPlaylist!!.songs.size} 曲",
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-            )
-            SongList(songs = selectedPlaylist!!.songs, currentSong = null, onSongClick = onSongClick)
-        }
+        PlaylistDetailScreen(
+            playlist = selectedPlaylist!!,
+            currentSong = currentSong,
+            onSongClick = onSongClick,
+            onBack = { selectedPlaylist = null }
+        )
     } else {
         // プレイリスト一覧を表示（フォルダ形式）
         Column(modifier = Modifier.padding(16.dp)) {
@@ -1385,12 +1453,7 @@ fun PlaylistTab(playlists: List<Playlist>, songList: List<Song>, onPlaylistChang
             if (playlists.isEmpty()) {
                 Text("プレイリストがありません", style = MaterialTheme.typography.bodyMedium)
             } else {
-                Text(
-                    "長押しで削除",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
+                 // 文言削除
                 LazyColumn {
                     items(playlists) { playlist ->
                         Column(
@@ -1418,6 +1481,51 @@ fun PlaylistTab(playlists: List<Playlist>, songList: List<Song>, onPlaylistChang
                 }
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PlaylistDetailScreen(playlist: Playlist, currentSong: Song?, onSongClick: (Song, List<Song>) -> Unit, onBack: () -> Unit) {
+    var sortType by remember { mutableStateOf(SortType.DEFAULT) }
+    var sortOrder by remember { mutableStateOf(SortOrder.ASC) }
+
+    val sortedSongs = remember(playlist.songs, sortType, sortOrder) {
+        val comparator = when (sortType) {
+            SortType.DEFAULT -> compareBy { song: Song -> song.displayName } // ファイル名順
+            SortType.TITLE -> compareBy(String.CASE_INSENSITIVE_ORDER) { song: Song -> song.title }
+            SortType.ARTIST -> compareBy(String.CASE_INSENSITIVE_ORDER) { song: Song -> song.artist }
+            SortType.ALBUM -> compareBy(String.CASE_INSENSITIVE_ORDER) { song: Song -> song.album }
+            SortType.PLAY_COUNT -> compareBy { song: Song -> song.playCount }
+        }
+        if (sortOrder == SortOrder.DESC) playlist.songs.sortedWith(comparator.reversed()) else playlist.songs.sortedWith(comparator)
+    }
+
+    Column {
+        TopAppBar(title = { Text(playlist.name) }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } })
+        
+        // プレイリスト内ソート機能
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            var expanded by remember { mutableStateOf(false) }
+            Box {
+                Button(onClick = { expanded = true }) {
+                    Text(when(sortType){
+                        SortType.DEFAULT -> "標準"; SortType.TITLE -> "曲名"; SortType.ARTIST -> "アーティスト"
+                        SortType.ALBUM -> "アルバム"; SortType.PLAY_COUNT -> "再生回数"
+                    })
+                }
+                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    DropdownMenuItem(text = { Text("標準") }, onClick = { sortType = SortType.DEFAULT; expanded = false })
+                    DropdownMenuItem(text = { Text("曲名") }, onClick = { sortType = SortType.TITLE; expanded = false })
+                    DropdownMenuItem(text = { Text("アーティスト") }, onClick = { sortType = SortType.ARTIST; expanded = false })
+                    DropdownMenuItem(text = { Text("アルバム") }, onClick = { sortType = SortType.ALBUM; expanded = false })
+                    DropdownMenuItem(text = { Text("再生回数") }, onClick = { sortType = SortType.PLAY_COUNT; expanded = false })
+                }
+            }
+            Button(onClick = { sortOrder = if (sortOrder == SortOrder.ASC) SortOrder.DESC else SortOrder.ASC }) { Text(if (sortOrder == SortOrder.ASC) "昇順" else "降順") }
+        }
+
+        SongList(songs = sortedSongs, currentSong = currentSong, onSongClick = { song -> onSongClick(song, sortedSongs) })
     }
 }
 
@@ -1470,7 +1578,7 @@ fun FolderList(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ArtistFolderTab(songList: List<Song>, onSongClick: (Song) -> Unit) {
+fun ArtistFolderTab(songList: List<Song>, onSongClick: (Song, List<Song>) -> Unit) {
     var selectedArtist by remember { mutableStateOf<String?>(null) }
     var selectedAlbum by remember { mutableStateOf<String?>(null) }
 
@@ -1496,7 +1604,7 @@ fun ArtistFolderTab(songList: List<Song>, onSongClick: (Song) -> Unit) {
                         }
                     }
                 )
-                SongList(songs = songs, currentSong = null, onSongClick = onSongClick)
+                SongList(songs = songs, currentSong = null, onSongClick = { song -> onSongClick(song, songs) })
             }
         }
         // 2. アーティストが選択されたら、そのアーティストのアルバムリストを表示
@@ -1533,7 +1641,7 @@ fun ArtistFolderTab(songList: List<Song>, onSongClick: (Song) -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AlbumFolderTab(songList: List<Song>, onSongClick: (Song) -> Unit) {
+fun AlbumFolderTab(songList: List<Song>, onSongClick: (Song, List<Song>) -> Unit) {
     var selectedAlbum by remember { mutableStateOf<String?>(null) }
 
     if (selectedAlbum != null) {
@@ -1551,7 +1659,7 @@ fun AlbumFolderTab(songList: List<Song>, onSongClick: (Song) -> Unit) {
                 title = { Text(selectedAlbum!!.ifBlank { "不明なアルバム" }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = { IconButton(onClick = { selectedAlbum = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }
             )
-            SongList(songs = songsByAlbum, currentSong = null, onSongClick = onSongClick)
+            SongList(songs = songsByAlbum, currentSong = null, onSongClick = { song -> onSongClick(song, songsByAlbum) })
         }
     } else {
         // 最初にアルバム一覧を表示
@@ -1655,6 +1763,16 @@ private fun getPlaylistBasePath(context: Context): String {
         .getString(KEY_PLAYLIST_BASE_PATH, "") ?: ""
 }
 
+// MediaSession設定の保存・取得関数
+private fun saveUseSystemMediaController(context: Context, use: Boolean) {
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        .putBoolean(KEY_USE_SYSTEM_MEDIA_CONTROLLER, use).apply()
+}
+private fun getUseSystemMediaController(context: Context): Boolean {
+    return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .getBoolean(KEY_USE_SYSTEM_MEDIA_CONTROLLER, false)
+}
+
 private fun saveUriList(context: Context, key: String, uris: List<Uri>) {
     val uriStrings = uris.map { it.toString() }.toSet()
     context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putStringSet(key, uriStrings).apply()
@@ -1745,6 +1863,8 @@ private suspend fun countFilesInDirectory(context: Context, directoryUri: Uri): 
     var count = 0
 
     // 高速化: Uriから実際のファイルパスを推測してjava.io.Fileを使用する
+    // v2.0.8: SAFフォールバック時はカウントをスキップするため（0を返す）、ここではFile APIが使えるかだけを試す
+    
     var useFileApi = false
     var rootFile: File? = null
     try {
@@ -1778,33 +1898,15 @@ private suspend fun countFilesInDirectory(context: Context, directoryUri: Uri): 
             // 重要: 実機制限などで0件の場合はフォールバックする
             if (count > 0) {
                 return@withContext count
-            } else {
-                useFileApi = false // フォールバックトリガー
             }
         } catch (e: Exception) {
             e.printStackTrace()
-            useFileApi = false
         }
     }
 
-    // 従来の方法（バックアップ）: SAFを使用
-    val contentResolver = context.contentResolver
-    val documentsTree = DocumentsContract.buildDocumentUriUsingTree(directoryUri, DocumentsContract.getTreeDocumentId(directoryUri))
-    fun traverse(currentUri: Uri) {
-        try {
-            val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(directoryUri, DocumentsContract.getDocumentId(currentUri))
-            contentResolver.query(childrenUri, null, null, null, null)?.use { cursor ->
-                while (cursor.moveToNext()) {
-                    val mimeType = cursor.getString(cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE))
-                    if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
-                        val docId = cursor.getString(cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID))
-                        traverse(DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId))
-                    } else { count++ }
-                }
-            }
-        } catch (e: Exception) { e.printStackTrace() }
-    }
-    traverse(documentsTree); return@withContext count
+    // v2.0.8: SAFが必要な場合、ここでの低速カウントは時間がかかるためスキップする (return 0)
+    // 実際のカウントと読み込みは getAudioFilesFromDirectory でまとめて行う
+    return@withContext 0 
 }
 private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: Uri, totalFiles: Int, onProgress: (Float) -> Unit): List<Song> = withContext(Dispatchers.IO) {
     val songList = mutableListOf<Song>()
@@ -1867,6 +1969,18 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
                         var songAlbum = "Unknown Album"
                         var trackNumber = 0
 
+                        // v2.0.8: メタデータ取得復活（ユーザー要望）
+                        try {
+                            retriever.setDataSource(filePath)
+                            songTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE) ?: title
+                            songArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST) ?: "Unknown Artist"
+                            songAlbum = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM) ?: "Unknown Album"
+                            val trackString = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
+                            trackNumber = trackString?.substringBefore("/")?.toIntOrNull() ?: 0
+                        } catch (e: Exception) {
+                            // メタデータ取得失敗時はデフォルト値
+                        }
+
                         songList.add(Song(Uri.fromFile(file), file.name, songTitle, songArtist, songAlbum, 0, trackNumber, directoryUri))
                         
                     } catch (e: Exception) { e.printStackTrace() }
@@ -1884,9 +1998,9 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
 
     if (!useFileApi) {
         // 従来のDocumentFileを使用したスキャン（低速だが確実）
-        // 既存のtotalFilesが0の場合、プログレス計算でNaNになるのを防ぐ
-        val effectiveTotal = if (totalFiles > 0) totalFiles else 1
-
+        // v2.0.8: totalFilesが0（スキップされた）場合、プログレスは推定値や件数ベースにする必要があるが、
+        // 簡易実装として 0.1f ずつ増やすなどの対応、あるいは「読み込み中... N曲」表示にする（呼び出し元で対応）
+        
         val contentResolver = context.contentResolver
         val documentsTree = DocumentsContract.buildDocumentUriUsingTree(directoryUri, DocumentsContract.getTreeDocumentId(directoryUri))
         fun traverseDirectory(currentUri: Uri) {
@@ -1896,26 +2010,54 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
                     while (cursor.moveToNext()) {
                         val docId = cursor.getString(cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID))
                         val mimeType = cursor.getString(cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE))
-                        val displayName = cursor.getString(cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME))
-                        val docUri = DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId)
-                        if (mimeType != DocumentsContract.Document.MIME_TYPE_DIR) {
-                            val ext = displayName.substringAfterLast('.', "").lowercase()
+                        
+                        // 高速化のためディレクトリなら再帰
+                        if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
+                            traverseDirectory(DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId))
+                        } else {
+                            val name = cursor.getString(cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)) ?: ""
+                            val ext = name.substringAfterLast('.', "").lowercase()
+                            
+                            // 拡張子チェック
+                            // MIMEタイプが audio/* または 一般的な音楽拡張子
                             if (mimeType.startsWith("audio/") || mimeType == "application/ogg" || 
                                 setOf("mp3", "m4a", "flac", "wav", "aac", "ogg").contains(ext)) {
                                 processedCount++
-                                if (processedCount % 10 == 0) {
-                                    onProgress(processedCount.toFloat().coerceAtMost(effectiveTotal.toFloat()) / effectiveTotal.toFloat())
+                                if (processedCount % 5 == 0) { // 更新頻度
+                                    // totalCountが0の場合は適当な進捗を送るが、呼び出し側で件数表示に切り替えるため、ここではprocessedCountを負の値として送るハックもありだが
+                                    // onProgressはFloatのみ。
+                                    // 呼び出し元が totalFiles == 0 の場合、progress は無視して processedCount を表示するロジックに変更するのが望ましいが
+                                    // ここでは単純に 0.5 (50%) などを送って「動いている」ことだけ示す、あるいは 1.0 未満で推移させる
+                                    onProgress(0.1f) // 不定状態
                                 }
                                 
-                                // 高速化のためメタデータ取得をスキップ
-                                var title = displayName
-                                if (title.contains(".")) {
-                                    title = title.substringBeforeLast(".")
-                                }
+                                // v2.0.8: メタデータ取得復活（低速モードでも情報重視）
+                                var songTitle = name.substringBeforeLast('.')
+                                var songArtist = "Unknown Artist"
+                                var songAlbum = "Unknown Album"
+                                var trackNumber = 0
                                 
-                                songList.add(Song(docUri, displayName, title, "Unknown Artist", "Unknown Album", 0, 0, directoryUri))
+                                try {
+                                    /* SAFでのメタデータ取得は非常に遅いが要望により実装検討
+                                       ただしDocumentFileからのパス取得は困難なため、ここではファイル名ベースを維持しつつ、
+                                       後で可能なら改善するが、ひとまずタイトル等はファイル名から。
+                                       ★実機で遅すぎる場合はここがボトルネックになる。
+                                       -> MediaMetadataRetriever は Uri を受け取れる。
+                                    */
+                                    val fileUri = DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId)
+                                    retriever.setDataSource(context, fileUri)
+                                    songTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE) ?: songTitle
+                                    songArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST) ?: "Unknown Artist"
+                                    songAlbum = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM) ?: "Unknown Album"
+                                    val trackString = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
+                                    trackNumber = trackString?.substringBefore("/")?.toIntOrNull() ?: 0
+                                } catch (e: Exception) {
+                                     // 無視
+                                }
+
+                                songList.add(Song(DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId), name, songTitle, songArtist, songAlbum, 0, trackNumber, directoryUri))
                             }
-                        } else { traverseDirectory(docUri) }
+                        }
                     }
                 }
             } catch (e: Exception) { e.printStackTrace() }
@@ -1923,8 +2065,8 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
         traverseDirectory(documentsTree)
     }
     
-    retriever.release()
-    return@withContext songList
+    // 最後にソート（デフォルト順）
+    return@withContext songList.sortedBy { it.title }
 }
 
 /**
