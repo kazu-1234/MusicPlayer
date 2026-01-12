@@ -714,7 +714,8 @@ fun MusicPlayerScreen(
                          Column {
                              Text("Music Player")
                              if (isScanning) {
-                                 Text("読み込み中: ${scanCount}曲", style = MaterialTheme.typography.bodySmall)
+                                 val percent = (scanProgress * 100).toInt()
+                                 Text("読み込み中: ${percent}% (${scanCount}曲)", style = MaterialTheme.typography.bodySmall)
                                  LinearProgressIndicator(progress = { scanProgress }, modifier = Modifier.fillMaxWidth().height(2.dp))
                              }
                          }
