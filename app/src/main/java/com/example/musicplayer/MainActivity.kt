@@ -1182,6 +1182,8 @@ fun SettingsScreen(onNavigateBack: () -> Unit) {
                 var updateInfo by remember { mutableStateOf<String?>(null) }
                 var latestVersion by remember { mutableStateOf<String?>(null) }
                 var downloadUrl by remember { mutableStateOf<String?>(null) }
+                var updateReleaseNotes by remember { mutableStateOf<String?>(null) }
+                var showUpdateConfirmDialog by remember { mutableStateOf(false) } // ダイアログ制御用
                 
                 Text("現在のバージョン: $APP_VERSION", style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(8.dp))
@@ -1198,13 +1200,16 @@ fun SettingsScreen(onNavigateBack: () -> Unit) {
                                     }
                                     latestVersion = result.first
                                     downloadUrl = result.second
+                                    updateReleaseNotes = result.third
+                                    
                                     if (latestVersion != null) {
                                         val current = APP_VERSION.replace(".", "").toIntOrNull() ?: 0
                                         val latest = latestVersion!!.replace(".", "").replace("v", "").toIntOrNull() ?: 0
-                                        updateInfo = if (latest > current) {
-                                            "新しいバージョン $latestVersion が利用可能です"
+                                        if (latest > current) {
+                                            updateInfo = "新しいバージョン $latestVersion が利用可能です"
+                                            showUpdateConfirmDialog = true // 更新があればダイアログを表示
                                         } else {
-                                            "最新バージョンです"
+                                            updateInfo = "最新バージョンです"
                                         }
                                     } else {
                                         updateInfo = "更新確認に失敗しました"
@@ -1219,20 +1224,39 @@ fun SettingsScreen(onNavigateBack: () -> Unit) {
                     ) {
                         Text(if (isCheckingUpdate) "確認中..." else "更新を確認")
                     }
-                    
-                    if (downloadUrl != null && latestVersion != null) {
-                        Spacer(Modifier.width(8.dp))
-                        Button(onClick = {
-                            updateUrl?.let { downloadAndInstallApk(context, it) }
-                        }) {
-                            Text("ダウンロードして更新")
-                        }
-                    }
                 }
                 
                 updateInfo?.let {
                     Spacer(Modifier.height(8.dp))
                     Text(it, style = MaterialTheme.typography.bodyMedium)
+                }
+
+                if (showUpdateConfirmDialog && latestVersion != null && downloadUrl != null) {
+                    AlertDialog(
+                        onDismissRequest = { showUpdateConfirmDialog = false },
+                        title = { Text("アップデートあり") },
+                        text = {
+                            Column {
+                                Text("新しいバージョン $latestVersion が見つかりました。")
+                                if (!updateReleaseNotes.isNullOrBlank()) {
+                                    Spacer(Modifier.height(8.dp))
+                                    Text("変更点:", style = MaterialTheme.typography.titleSmall)
+                                    Text(updateReleaseNotes!!, style = MaterialTheme.typography.bodySmall)
+                                }
+                                Spacer(Modifier.height(16.dp))
+                                Text("ダウンロードして更新しますか？")
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                showUpdateConfirmDialog = false
+                                downloadAndInstallApk(context, downloadUrl!!)
+                            }) { Text("更新") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showUpdateConfirmDialog = false }) { Text("キャンセル") }
+                        }
+                    )
                 }
             }
             item {
@@ -1958,7 +1982,7 @@ private suspend fun parseM3uPlaylist(context: Context, playlistUri: Uri, allSong
 // GitHubリポジトリ名を設定してください
 private const val GITHUB_REPO = "kazu-1234/MusicPlayer" // ユーザー名/リポジトリ名
 
-private suspend fun checkForUpdate(): Pair<String?, String?> = withContext(Dispatchers.IO) {
+private suspend fun checkForUpdate(): Triple<String?, String?, String?> = withContext(Dispatchers.IO) {
     return@withContext try {
         val url = URL("https://api.github.com/repos/$GITHUB_REPO/releases/latest")
         val connection = url.openConnection() as HttpsURLConnection
@@ -1972,6 +1996,7 @@ private suspend fun checkForUpdate(): Pair<String?, String?> = withContext(Dispa
             val json = JSONObject(response)
             val tagName = json.optString("tag_name", null)
             val htmlUrl = json.optString("html_url", null)
+            val body = json.optString("body", "") // リリースノート本文
             
             // APKアセットのダウンロードURLを探す
             val assets = json.optJSONArray("assets")
@@ -1987,13 +2012,13 @@ private suspend fun checkForUpdate(): Pair<String?, String?> = withContext(Dispa
                 }
             }
             
-            Pair(tagName, apkUrl ?: htmlUrl)
+            Triple(tagName, apkUrl ?: htmlUrl, body)
         } else {
-            Pair(null, null)
+            Triple(null, null, null)
         }
     } catch (e: Exception) {
         e.printStackTrace()
-        Pair(null, null)
+        Triple(null, null, null)
     }
 }
 
