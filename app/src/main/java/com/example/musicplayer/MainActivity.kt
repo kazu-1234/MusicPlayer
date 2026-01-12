@@ -517,8 +517,6 @@ fun MusicPlayerScreen(
                 val newQueue = listOf(currentSong!!) + remainder
                 playingQueue = newQueue
                 currentIndex = 0 // 先頭は現在の曲
-                
-                Toast.makeText(context, "シャッフル ON (リスト再生成)", Toast.LENGTH_SHORT).show()
             } else {
                 // ON -> OFF: 元の順序に戻す
                 playingQueue = originalQueue
@@ -527,7 +525,6 @@ fun MusicPlayerScreen(
                 if (idx != -1) {
                     currentIndex = idx
                 }
-                Toast.makeText(context, "シャッフル OFF", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -1037,6 +1034,97 @@ fun FullScreenPlayer(
 ) {
     var offsetY by remember { mutableStateOf(0f) }
     val albumArt = rememberAlbumArt(context, currentSong.uri)
+    // キュー表示用の状態
+    var showQueue by remember { mutableStateOf(false) }
+    
+    // キュー表示ダイアログ
+    if (showQueue) {
+        AlertDialog(
+            onDismissRequest = { showQueue = false },
+            title = { Text("再生キュー (${playingQueue.size}曲)") },
+            text = {
+                LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
+                    items(playingQueue.size) { index ->
+                        val song = playingQueue[index]
+                        val isCurrent = song.uri == currentSong.uri
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    if (isCurrent) MaterialTheme.colorScheme.primaryContainer
+                                    else Color.Transparent
+                                )
+                                .padding(vertical = 8.dp, horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // 曲番号
+                            Text(
+                                "${index + 1}",
+                                modifier = Modifier.width(32.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.Center
+                            )
+                            // 曲情報
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    song.title,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    song.artist,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            // 上へ移動ボタン
+                            if (index > 0) {
+                                IconButton(
+                                    onClick = { onReorder(index, index - 1) },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.ArrowUpward,
+                                        contentDescription = "上へ",
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            } else {
+                                Spacer(modifier = Modifier.size(32.dp))
+                            }
+                            // 下へ移動ボタン
+                            if (index < playingQueue.size - 1) {
+                                IconButton(
+                                    onClick = { onReorder(index, index + 1) },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.ArrowDownward,
+                                        contentDescription = "下へ",
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            } else {
+                                Spacer(modifier = Modifier.size(32.dp))
+                            }
+                        }
+                        if (index < playingQueue.size - 1) {
+                            HorizontalDivider()
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showQueue = false }) {
+                    Text("閉じる")
+                }
+            }
+        )
+    }
     
     Surface(
         modifier = Modifier
@@ -1062,11 +1150,20 @@ fun FullScreenPlayer(
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // 閉じるボタン
+            // ヘッダー: 閉じるボタンとキューボタン
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
+                // キューボタン（左側）
+                IconButton(onClick = { showQueue = true }) {
+                    Icon(
+                        Icons.Default.List,
+                        contentDescription = "Queue",
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+                // 閉じるボタン（中央）
                 IconButton(onClick = onDismiss) {
                     Icon(
                         Icons.Default.KeyboardArrowDown,
@@ -1074,6 +1171,8 @@ fun FullScreenPlayer(
                         modifier = Modifier.size(32.dp)
                     )
                 }
+                // 右側のスペーサー（バランス用）
+                Spacer(modifier = Modifier.size(48.dp))
             }
             
             Spacer(modifier = Modifier.weight(1f))
