@@ -1988,10 +1988,13 @@ private suspend fun checkForUpdate(): Triple<String?, String?, String?> = withCo
         val connection = url.openConnection() as HttpsURLConnection
         connection.requestMethod = "GET"
         connection.setRequestProperty("Accept", "application/vnd.github.v3+json")
+        // GitHub APIはUser-Agentが必須の場合があるため追加
+        connection.setRequestProperty("User-Agent", "MusicPlayerAndroid")
         connection.connectTimeout = 10000
         connection.readTimeout = 10000
         
-        if (connection.responseCode == 200) {
+        val responseCode = connection.responseCode
+        if (responseCode == 200) {
             val response = connection.inputStream.bufferedReader().use { it.readText() }
             val json = JSONObject(response)
             val tagName = json.optString("tag_name", null)
@@ -2014,6 +2017,8 @@ private suspend fun checkForUpdate(): Triple<String?, String?, String?> = withCo
             
             Triple(tagName, apkUrl ?: htmlUrl, body)
         } else {
+            // エラー時はnullを返すが、ログには出す
+            println("GitHub API Error: $responseCode")
             Triple(null, null, null)
         }
     } catch (e: Exception) {
