@@ -1058,30 +1058,31 @@ fun FullScreenPlayer(
             title = { Text("再生キュー (${playingQueue.size}曲)") },
             text = {
                 LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
-                    items(playingQueue.size) { index ->
+                    items(playingQueue.size, key = { playingQueue[it].uri.toString() }) { index ->
                         val song = playingQueue[index]
                         val isCurrent = song.uri == currentSong.uri
                         val isDragging = draggedIndex == index
                         
-                        // ドラッグ中の他アイテムのオフセット計算
+                        // ドラッグ中のオフセット計算（シンプル化）
                         val itemHeight = 56
-                        val targetOffset = if (draggedIndex != null && !isDragging) {
-                            val draggedPos = draggedIndex!!
-                            val currentDraggedTarget = draggedPos + (dragOffset / itemHeight).toInt()
-                            when {
-                                // ドラッグ中のアイテムが上に移動した場合、間のアイテムは下にずれる
-                                draggedPos > index && currentDraggedTarget <= index -> itemHeight
-                                // ドラッグ中のアイテムが下に移動した場合、間のアイテムは上にずれる
-                                draggedPos < index && currentDraggedTarget >= index -> -itemHeight
-                                else -> 0
-                            }
-                        } else 0
                         
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .offset { 
-                                    IntOffset(0, if (isDragging) dragOffset.toInt() else targetOffset) 
+                                    val yOffset = if (isDragging) {
+                                        dragOffset.toInt()
+                                    } else if (draggedIndex != null) {
+                                        val draggedPos = draggedIndex!!
+                                        val moveBy = (dragOffset / itemHeight).toInt()
+                                        val targetPos = draggedPos + moveBy
+                                        when {
+                                            draggedPos > index && targetPos <= index -> itemHeight
+                                            draggedPos < index && targetPos >= index -> -itemHeight
+                                            else -> 0
+                                        }
+                                    } else 0
+                                    IntOffset(0, yOffset) 
                                 }
                                 .background(
                                     when {
