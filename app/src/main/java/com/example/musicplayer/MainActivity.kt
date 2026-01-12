@@ -79,16 +79,8 @@ import android.os.Build
 import android.graphics.BitmapFactory
 import androidx.core.app.NotificationCompat
 import com.example.musicplayer.ui.theme.MusicPlayerTheme
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.json.JSONArray
-import org.json.JSONObject
-import java.io.BufferedReader
 import java.io.File
-import java.io.InputStreamReader
-import java.net.URL
-import javax.net.ssl.HttpsURLConnection
 import java.util.Collections
 
 // --- アプリ情報 ---
