@@ -84,8 +84,8 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.0.1: スキャン処理を高速化（SDカード対応）、アイコン変更
-private const val APP_VERSION = "2.0.1"
+// v2.0.2: コード整理、デフォルト設定確認
+private const val APP_VERSION = "2.0.2"
 private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-12 v28"
 
 // --- データ構造の定義 ---
@@ -1811,15 +1811,17 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
                 try {
                     val filePath = file.absolutePath
                     val title = file.nameWithoutExtension
-                    // ファイル名からメタデータを簡易取得（高速化のためRetrieverは使わない、または必要なら使う）
-                    // ここではRetrieverを使うと遅くなるので、一旦ファイル名ベースにするか、
-                    // メタデータが必要ならRetrieverを使うが、Fileパス指定でDocumentFileよりは早いはず
+                    
+                    // 高速化のため、スキャン時のメタデータ取得（MediaMetadataRetriever）を廃止
+                    // ファイル名を表示タイトルとし、再生時に必要ならメタデータを取得する設計とする
+                    // ユーザー要望: スキャン時間の短縮、「そもそもスキャン（詳細情報取得）が必要か？」への対応
                     
                     var songTitle = title
                     var songArtist = "Unknown Artist"
                     var songAlbum = "Unknown Album"
                     var trackNumber = 0
 
+                    /* メタデータ取得は重いためスキップ
                     try {
                         retriever.setDataSource(filePath)
                         songTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE) ?: title
@@ -1830,28 +1832,8 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
                     } catch (e: Exception) {
                         // メタデータ取得失敗時はデフォルト値
                     }
+                    */
 
-                    // UriはDocumentFile互換のものを作成するのは難しいので、FileProviderを使うか、
-                    // 以前のようにDocumentIDベースで構築する必要があるが、
-                    // ここではアプリ内で再生するため、filePath自体は保持できない（Songクラス定義による）
-                    // SongクラスはUriを要求する。
-                    // そこで、再生時にFileパスからUriを作れるようにするか、
-                    // メディアストアのIDを検索してUriを取得するのがベスト。
-                    // しかし単純化のため、Uri.fromFileを使用する（FileUriExposedExceptionに注意だが、ターゲットSDK次第）
-                    // または、DocumentFileのUri構成を模倣する。
-                    
-                    // 補足: DocumentFileのUri構築は親Uriに依存するため、階層が深いとID生成が複雑。
-                    // 互換性維持のため、ファイルパスが見つからない場合のみDocumentFileロジックにフォールバックさせたいが
-                    // ここに到達している＝Fileで読めるので、Uri.fromFileを使う。
-                    // ただしAndroid 7.0以降はUri.fromFileはNGな場合があるが、
-                    // MediaPlayer.setDataSourceに渡す分にはパス文字列があれば良い。
-                    // Songクラスのuriフィールドをどう使うかによる。
-                    // 現状のSongクラスのUriはMediaPlayerに渡される。
-                    
-                    // Android 11+ではFile APIでの読み取りはMANAGE_EXTERNAL_STORAGEがないと制限されるが
-                    // ここまで来れているなら読める。
-                    // Uri.fromFile(file) を使用。
-                    
                     songList.add(Song(Uri.fromFile(file), file.name, songTitle, songArtist, songAlbum, 0, trackNumber, directoryUri))
                     
                 } catch (e: Exception) { e.printStackTrace() }
@@ -1877,19 +1859,20 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
                         val displayName = cursor.getString(cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME))
                         val docUri = DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId)
                         if (mimeType != DocumentsContract.Document.MIME_TYPE_DIR) {
-                            processedCount++
-                            if (processedCount % 10 == 0) {
-                                onProgress(processedCount.toFloat().coerceAtMost(totalFiles.toFloat()) / totalFiles.toFloat())
+                            if (mimeType.startsWith("audio/") || mimeType == "application/ogg") {
+                                processedCount++
+                                if (processedCount % 10 == 0) {
+                                    onProgress(processedCount.toFloat().coerceAtMost(totalFiles.toFloat()) / totalFiles.toFloat())
+                                }
+                                
+                                // 高速化のためメタデータ取得をスキップ
+                                var title = displayName
+                                if (title.contains(".")) {
+                                    title = title.substringBeforeLast(".")
+                                }
+                                
+                                songList.add(Song(docUri, displayName, title, "Unknown Artist", "Unknown Album", 0, 0, directoryUri))
                             }
-                            try {
-                                retriever.setDataSource(context, docUri)
-                                val title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE) ?: displayName
-                                val artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST) ?: "Unknown Artist"
-                                val album = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM) ?: "Unknown Album"
-                                val trackString = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
-                                val trackNumber = trackString?.substringBefore("/")?.toIntOrNull() ?: 0
-                                songList.add(Song(docUri, displayName, title, artist, album, 0, trackNumber, directoryUri))
-                            } catch (e: Exception) { /* Not an audio file */ }
                         } else { traverseDirectory(docUri) }
                     }
                 }

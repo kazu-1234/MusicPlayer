@@ -160,3 +160,7 @@
 - UI/UXã‚’å¤§å¹…ã«æ”¹å–„
 - è¨­å®šç”»é¢ã‚„é«˜åº¦ãªãƒ©ã‚¤ãƒ–ãƒ©ãƒªç®¡ç†æ©Ÿèƒ½ã‚’è¿½åŠ 
 - Initial release
+
+## v2.0.2 (2026-01-13)
+- ƒrƒ‹ƒhƒGƒ‰[‚ÌC³iƒCƒ“ƒ|[ƒgd•¡‚Ì‰ðÁj
+- ƒfƒtƒHƒ‹ƒgÝ’è‚Ì’²®i‰Šú‰¹ŠyƒtƒHƒ‹ƒ_Ý’è‚È‚Çj
