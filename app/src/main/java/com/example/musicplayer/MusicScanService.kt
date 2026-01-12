@@ -247,31 +247,44 @@ class MusicScanService : Service() {
                     .toList()
                 val total = allFiles.size 
                 if (total > 0) {
-                     allFiles.forEach { file ->
-                        processedCount++
-                         // Report progress with count
-                        onProgress(processedCount.toFloat().coerceAtMost(total.toFloat()) / total.toFloat(), processedCount)
-                        
-                        try {
-                            val filePath = file.absolutePath
-                            val title = file.nameWithoutExtension
-                            var songTitle = title
-                            var songArtist = "Unknown Artist"
-                            var songAlbum = "Unknown Album"
-                            var trackNumber = 0
+                    // 並列処理: ファイルをチャンクに分割して並列でメタデータ取得
+                    val chunkSize = 10 // 10ファイルずつ並列処理
+                    val results = allFiles.chunked(chunkSize).flatMap { chunk ->
+                        chunk.map { file ->
+                            async {
+                                processedCount++
+                                onProgress(processedCount.toFloat().coerceAtMost(total.toFloat()) / total.toFloat(), processedCount)
+                                
+                                try {
+                                    val retrieverLocal = MediaMetadataRetriever()
+                                    val filePath = file.absolutePath
+                                    val title = file.nameWithoutExtension
+                                    var songTitle = title
+                                    var songArtist = "Unknown Artist"
+                                    var songAlbum = "Unknown Album"
+                                    var trackNumber = 0
 
-                            try {
-                                retriever.setDataSource(filePath)
-                                songTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE) ?: title
-                                songArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST) ?: "Unknown Artist"
-                                songAlbum = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM) ?: "Unknown Album"
-                                val trackString = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
-                                trackNumber = trackString?.substringBefore("/")?.toIntOrNull() ?: 0
-                            } catch (e: Exception) { }
+                                    try {
+                                        retrieverLocal.setDataSource(filePath)
+                                        songTitle = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE) ?: title
+                                        songArtist = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST) ?: "Unknown Artist"
+                                        songAlbum = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM) ?: "Unknown Album"
+                                        val trackString = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
+                                        trackNumber = trackString?.substringBefore("/")?.toIntOrNull() ?: 0
+                                        retrieverLocal.release()
+                                    } catch (e: Exception) { 
+                                        try { retrieverLocal.release() } catch (ignored: Exception) {}
+                                    }
 
-                            songList.add(Song(Uri.fromFile(file), file.name, songTitle, songArtist, songAlbum, 0, trackNumber, directoryUri))
-                        } catch (e: Exception) { e.printStackTrace() }
+                                    Song(Uri.fromFile(file), file.name, songTitle, songArtist, songAlbum, 0, trackNumber, directoryUri)
+                                } catch (e: Exception) { 
+                                    e.printStackTrace()
+                                    null 
+                                }
+                            }
+                        }.awaitAll()
                     }
+                    songList.addAll(results.filterNotNull())
                 } else {
                      useFileApi = false 
                 }

@@ -1075,7 +1075,35 @@ fun FullScreenPlayer(
                                 .padding(vertical = 8.dp, horizontal = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // ドラッグハンドル
+                            // 曲番号
+                            Text(
+                                "${index + 1}",
+                                modifier = Modifier.width(28.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.Center
+                            )
+                            
+                            Spacer(modifier = Modifier.width(8.dp))
+                            
+                            // 曲情報
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    song.title,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    song.artist,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            
+                            // ドラッグハンドル（右側）
                             Icon(
                                 Icons.Default.DragHandle,
                                 contentDescription = "ドラッグ",
@@ -1088,8 +1116,7 @@ fun FullScreenPlayer(
                                                 dragOffset = 0f
                                             },
                                             onDragEnd = {
-                                                // ドラッグ終了時に移動先を計算
-                                                val itemHeight = 56 // 概算の行高さ
+                                                val itemHeight = 56
                                                 val moveBy = (dragOffset / itemHeight).toInt()
                                                 val targetIndex = (index + moveBy).coerceIn(0, playingQueue.size - 1)
                                                 if (targetIndex != index) {
@@ -1110,34 +1137,6 @@ fun FullScreenPlayer(
                                     },
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            
-                            Spacer(modifier = Modifier.width(8.dp))
-                            
-                            // 曲番号
-                            Text(
-                                "${index + 1}",
-                                modifier = Modifier.width(28.dp),
-                                style = MaterialTheme.typography.bodySmall,
-                                textAlign = TextAlign.Center
-                            )
-                            
-                            // 曲情報
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    song.title,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    song.artist,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
                         }
                         if (index < playingQueue.size - 1) {
                             HorizontalDivider()
