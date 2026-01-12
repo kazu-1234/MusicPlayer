@@ -128,16 +128,23 @@ class MainActivity : ComponentActivity() {
         
         mediaSession = android.support.v4.media.session.MediaSessionCompat(this, "MusicPlayerSession").apply {
             setCallback(object : android.support.v4.media.session.MediaSessionCompat.Callback() {
-                override fun onPlay() { sendBroadcast(Intent(this@MainActivity, MusicNotificationReceiver::class.java).apply { action = ACTION_PLAY_PAUSE }) }
-                override fun onPause() { sendBroadcast(Intent(this@MainActivity, MusicNotificationReceiver::class.java).apply { action = ACTION_PLAY_PAUSE }) }
-                override fun onSkipToNext() { sendBroadcast(Intent(this@MainActivity, MusicNotificationReceiver::class.java).apply { action = ACTION_NEXT }) }
-                override fun onSkipToPrevious() { sendBroadcast(Intent(this@MainActivity, MusicNotificationReceiver::class.java).apply { action = ACTION_PREVIOUS }) }
-                override fun onStop() { sendBroadcast(Intent(this@MainActivity, MusicNotificationReceiver::class.java).apply { action = ACTION_STOP }) }
+                override fun onPlay() { 
+                    sendBroadcast(Intent(ACTION_PLAY_PAUSE).setPackage(packageName)) 
+                }
+                override fun onPause() { 
+                    sendBroadcast(Intent(ACTION_PLAY_PAUSE).setPackage(packageName)) 
+                }
+                override fun onSkipToNext() { 
+                    sendBroadcast(Intent(ACTION_NEXT).setPackage(packageName)) 
+                }
+                override fun onSkipToPrevious() { 
+                    sendBroadcast(Intent(ACTION_PREVIOUS).setPackage(packageName)) 
+                }
+                override fun onStop() { 
+                    sendBroadcast(Intent(ACTION_STOP).setPackage(packageName)) 
+                }
                 override fun onSeekTo(pos: Long) {
-                     sendBroadcast(Intent(this@MainActivity, MusicNotificationReceiver::class.java).apply { 
-                         action = ACTION_SEEK 
-                         putExtra(EXTRA_SEEK_POS, pos)
-                     })
+                    sendBroadcast(Intent(ACTION_SEEK).setPackage(packageName).putExtra(EXTRA_SEEK_POS, pos))
                 }
             })
             isActive = true
@@ -1150,20 +1157,11 @@ fun FullScreenPlayer(
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // ヘッダー: 閉じるボタンとキューボタン
+            // ヘッダー: 閉じるボタンのみ（中央）
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.Center
             ) {
-                // キューボタン（左側）
-                IconButton(onClick = { showQueue = true }) {
-                    Icon(
-                        Icons.Default.List,
-                        contentDescription = "Queue",
-                        modifier = Modifier.size(28.dp)
-                    )
-                }
-                // 閉じるボタン（中央）
                 IconButton(onClick = onDismiss) {
                     Icon(
                         Icons.Default.KeyboardArrowDown,
@@ -1171,8 +1169,6 @@ fun FullScreenPlayer(
                         modifier = Modifier.size(32.dp)
                     )
                 }
-                // 右側のスペーサー（バランス用）
-                Spacer(modifier = Modifier.size(48.dp))
             }
             
             Spacer(modifier = Modifier.weight(1f))
@@ -1316,6 +1312,21 @@ fun FullScreenPlayer(
             }
             
             Spacer(modifier = Modifier.weight(1f))
+            
+            // 右下にキューボタン
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                IconButton(onClick = { showQueue = true }) {
+                    Icon(
+                        Icons.Default.List,
+                        contentDescription = "Queue",
+                        modifier = Modifier.size(28.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
     }
 }
