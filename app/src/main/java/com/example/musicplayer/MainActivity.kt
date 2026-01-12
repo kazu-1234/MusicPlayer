@@ -1063,10 +1063,26 @@ fun FullScreenPlayer(
                         val isCurrent = song.uri == currentSong.uri
                         val isDragging = draggedIndex == index
                         
+                        // ドラッグ中の他アイテムのオフセット計算
+                        val itemHeight = 56
+                        val targetOffset = if (draggedIndex != null && !isDragging) {
+                            val draggedPos = draggedIndex!!
+                            val currentDraggedTarget = draggedPos + (dragOffset / itemHeight).toInt()
+                            when {
+                                // ドラッグ中のアイテムが上に移動した場合、間のアイテムは下にずれる
+                                draggedPos > index && currentDraggedTarget <= index -> itemHeight
+                                // ドラッグ中のアイテムが下に移動した場合、間のアイテムは上にずれる
+                                draggedPos < index && currentDraggedTarget >= index -> -itemHeight
+                                else -> 0
+                            }
+                        } else 0
+                        
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .offset { IntOffset(0, if (isDragging) dragOffset.toInt() else 0) }
+                                .offset { 
+                                    IntOffset(0, if (isDragging) dragOffset.toInt() else targetOffset) 
+                                }
                                 .background(
                                     when {
                                         isDragging -> MaterialTheme.colorScheme.secondaryContainer
@@ -1118,7 +1134,6 @@ fun FullScreenPlayer(
                                                 dragOffset = 0f
                                             },
                                             onDragEnd = {
-                                                val itemHeight = 56
                                                 val moveBy = (dragOffset / itemHeight).toInt()
                                                 val targetIndex = (index + moveBy).coerceIn(0, playingQueue.size - 1)
                                                 if (targetIndex != index) {
