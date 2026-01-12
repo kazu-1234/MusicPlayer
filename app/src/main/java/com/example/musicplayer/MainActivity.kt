@@ -57,6 +57,7 @@ import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -85,54 +86,59 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.0.8: メディア通知、シャッフル改善、スキャン高速化、メタデータ復活、ソート機能強化
-private    const val APP_VERSION = "v2.0.8"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-12 v28"
+// v2.0.9: 背景スキャン(並列化)、シャッフル改善(キュー管理)、再生キューUI、MediaSession修正、アップデートロジック修正
+private    const val APP_VERSION = "v2.0.9"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-12 v29"
 
 // --- データ構造の定義 ---
-data class Song(
-    val uri: Uri, 
-    val displayName: String, 
-    val title: String, 
-    val artist: String,
-    val album: String, 
-    var playCount: Int = 0, 
-    val trackNumber: Int, 
-    val sourceFolderUri: Uri,
-    val exists: Boolean = true  // ファイルが存在するかどうか
-)
-data class Playlist(val name: String, val songs: List<Song>)
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
 enum class SortOrder { ASC, DESC }
 enum class TabType { SONGS, PLAYLISTS, ARTISTS, ALBUMS }
-enum class RepeatMode { OFF, ALL, ONE }  // リピートモード
+enum class RepeatMode { OFF, ALL, ONE }
 
-// --- 状態を記憶するための設定 ---
+// --- 定数 ---
 private const val PREFS_NAME = "MusicPlayerPrefs"
 private const val KEY_SOURCE_FOLDER_URIS = "sourceFolderUris"
 private const val KEY_TAB_ORDER = "tabOrder"
-private const val KEY_PLAYLIST_BASE_PATH = "playlistBasePath" // プレイリスト用ベースパス設定
-private const val KEY_USE_SYSTEM_MEDIA_CONTROLLER = "useSystemMediaController" // MediaSession設定用
+private const val KEY_PLAYLIST_BASE_PATH = "playlistBasePath"
+private const val KEY_USE_SYSTEM_MEDIA_CONTROLLER = "useSystemMediaController"
 private const val LIBRARY_CACHE_FILE = "library.json"
 private const val PLAYLIST_CACHE_FILE = "playlists.json"
 
+// Actions
+private const val ACTION_NEXT = "com.example.musicplayer.ACTION_NEXT"
+private const val ACTION_PREVIOUS = "com.example.musicplayer.ACTION_PREVIOUS"
+private const val ACTION_PLAY_PAUSE = "com.example.musicplayer.ACTION_PLAY_PAUSE"
+private const val ACTION_SHUFFLE = "com.example.musicplayer.ACTION_SHUFFLE"
+private const val ACTION_REPEAT = "com.example.musicplayer.ACTION_REPEAT"
+private const val ACTION_STOP = "com.example.musicplayer.ACTION_STOP"
+private const val ACTION_SEEK = "com.example.musicplayer.ACTION_SEEK"
+private const val EXTRA_SEEK_POS = "com.example.musicplayer.EXTRA_SEEK_POS"
+private const val NOTIFICATION_CHANNEL_ID = "music_notification_channel"
+private const val NOTIFICATION_ID = 1
 
 class MainActivity : ComponentActivity() {
 
     // MediaSession
     private lateinit var mediaSession: android.support.v4.media.session.MediaSessionCompat
-    private var useSystemMediaController by mutableStateOf(true) // 設定で切り替え可能にする
+    private var useSystemMediaController by mutableStateOf(true)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // MediaSessionの初期化
         mediaSession = android.support.v4.media.session.MediaSessionCompat(this, "MusicPlayerSession").apply {
             setCallback(object : android.support.v4.media.session.MediaSessionCompat.Callback() {
                 override fun onPlay() { sendBroadcast(Intent(this@MainActivity, MusicNotificationReceiver::class.java).apply { action = ACTION_PLAY_PAUSE }) }
                 override fun onPause() { sendBroadcast(Intent(this@MainActivity, MusicNotificationReceiver::class.java).apply { action = ACTION_PLAY_PAUSE }) }
                 override fun onSkipToNext() { sendBroadcast(Intent(this@MainActivity, MusicNotificationReceiver::class.java).apply { action = ACTION_NEXT }) }
                 override fun onSkipToPrevious() { sendBroadcast(Intent(this@MainActivity, MusicNotificationReceiver::class.java).apply { action = ACTION_PREVIOUS }) }
+                override fun onStop() { sendBroadcast(Intent(this@MainActivity, MusicNotificationReceiver::class.java).apply { action = ACTION_STOP }) }
+                override fun onSeekTo(pos: Long) {
+                     sendBroadcast(Intent(this@MainActivity, MusicNotificationReceiver::class.java).apply { 
+                         action = ACTION_SEEK 
+                         putExtra(EXTRA_SEEK_POS, pos)
+                     })
+                }
             })
             isActive = true
         }
@@ -154,11 +160,9 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // 通知パーミッションのリクエスト (Android 13以降で必要)
     private fun requestNotificationPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) 
-                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 100)
             }
         }
@@ -167,12 +171,12 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         intent.action?.let { action ->
-            // UIにアクションを伝えるためにブロードキャストを送信
             val broadcastIntent = Intent(action)
             broadcastIntent.setPackage(packageName)
+            if (action == ACTION_SEEK) {
+                broadcastIntent.putExtras(intent)
+            }
             sendBroadcast(broadcastIntent)
-            
-            // 終了アクションの場合
             if (action == ACTION_STOP) {
                 finish()
             }
@@ -186,14 +190,11 @@ class MainActivity : ComponentActivity() {
         notificationManager.cancel(NOTIFICATION_ID)
     }
 
-    // --- 通知関連の関数 ---
-
-    // 通知チャンネルの作成
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val name = "楽曲再生"
             val descriptionText = "再生中の楽曲情報を通知に表示します"
-            val importance = NotificationManager.IMPORTANCE_LOW // 音を鳴らさない
+            val importance = NotificationManager.IMPORTANCE_LOW
             val channel = NotificationChannel(NOTIFICATION_CHANNEL_ID, name, importance).apply {
                 description = descriptionText
             }
@@ -203,14 +204,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // 通知の更新
     internal fun updateNotification(
         song: Song,
         isPlaying: Boolean,
         isShuffleEnabled: Boolean,
         repeatMode: RepeatMode
     ) {
-        // PendingIntentの作成
         val pendingIntent = PendingIntent.getActivity(
             this,
             0,
@@ -220,7 +219,6 @@ class MainActivity : ComponentActivity() {
             PendingIntent.FLAG_IMMUTABLE
         )
 
-        // アクション用PendingIntent
         fun createActionIntent(action: String): PendingIntent {
             val intent = Intent(this, MusicNotificationReceiver::class.java).apply {
                 this.action = action
@@ -234,68 +232,88 @@ class MainActivity : ComponentActivity() {
         }
 
         val notificationBuilder = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_play)
+            .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle(song.title)
             .setContentText(song.artist)
             .setLargeIcon(BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher))
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setContentIntent(pendingIntent)
-            .setOngoing(isPlaying) // 再生中は消せないようにする
+            .setOngoing(isPlaying)
             .setShowWhen(false)
             
-        // Styleの設定（設定に応じて切り替え）
         if (useSystemMediaController) {
-             notificationBuilder.setStyle(androidx.media.app.NotificationCompat.MediaStyle()
-                .setMediaSession(mediaSession.sessionToken) // MediaSessionと連携
-                .setShowActionsInCompactView(1, 2, 3) // 前、再生、次
-            )
+             val style = androidx.media.app.NotificationCompat.MediaStyle()
+                .setMediaSession(mediaSession.sessionToken)
+                .setShowActionsInCompactView(1, 2, 3)
+             notificationBuilder.setStyle(style)
+             
+             val metadataBuilder = android.support.v4.media.MediaMetadataCompat.Builder()
+                .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_TITLE, song.title)
+                .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_ARTIST, song.artist)
+                .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_ALBUM, song.album)
+                .putLong(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_DURATION, 0L)
+             
+             try {
+                val ret = MediaMetadataRetriever()
+                ret.setDataSource(this, song.uri)
+                val artBytes = ret.embeddedPicture
+                if (artBytes != null) {
+                    val bitmap = BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size)
+                    metadataBuilder.putBitmap(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_ALBUM_ART, bitmap)
+                    notificationBuilder.setLargeIcon(bitmap)
+                }
+                ret.release()
+             } catch (e: Exception) { }
+             
+             mediaSession.setMetadata(metadataBuilder.build())
+             
+             val stateBuilder = android.support.v4.media.session.PlaybackStateCompat.Builder()
+                .setActions(
+                    android.support.v4.media.session.PlaybackStateCompat.ACTION_PLAY or
+                    android.support.v4.media.session.PlaybackStateCompat.ACTION_PAUSE or
+                    android.support.v4.media.session.PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
+                    android.support.v4.media.session.PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
+                    android.support.v4.media.session.PlaybackStateCompat.ACTION_STOP or
+                    android.support.v4.media.session.PlaybackStateCompat.ACTION_SEEK_TO
+                )
+             stateBuilder.setState(
+                 if (isPlaying) android.support.v4.media.session.PlaybackStateCompat.STATE_PLAYING else android.support.v4.media.session.PlaybackStateCompat.STATE_PAUSED,
+                 android.support.v4.media.session.PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN,
+                 1.0f
+             )
+             mediaSession.setPlaybackState(stateBuilder.build())
         } else {
              notificationBuilder.setStyle(androidx.media.app.NotificationCompat.MediaStyle()
                 .setShowActionsInCompactView(1, 2, 3) 
             )
         }
 
-        // Actionの設定（以下変更なし）
-
-        // アクション追加（5つ：シャッフル→前→再生/一時停止→次→終了）
-        
-        // 0. シャッフル（無効時は斜線アイコン）
         notificationBuilder.addAction(
             if (isShuffleEnabled) R.drawable.ic_shuffle else R.drawable.ic_shuffle_off,
             if (isShuffleEnabled) "シャッフル ON" else "シャッフル OFF",
             createActionIntent(ACTION_SHUFFLE)
         )
-        
-        // 1. 前の曲
         notificationBuilder.addAction(
             R.drawable.ic_skip_previous,
             "前の曲",
             createActionIntent(ACTION_PREVIOUS)
         )
-
-        // 2. 再生/一時停止
         notificationBuilder.addAction(
             if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play,
             if (isPlaying) "一時停止" else "再生",
             createActionIntent(ACTION_PLAY_PAUSE)
         )
-
-        // 3. 次の曲
         notificationBuilder.addAction(
             R.drawable.ic_skip_next,
             "次の曲",
             createActionIntent(ACTION_NEXT)
         )
-
-        // 4. 終了（×ボタン）
         notificationBuilder.addAction(
             R.drawable.ic_close,
             "×",
             createActionIntent(ACTION_STOP)
         )
 
-
-        // 通知表示
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         notificationManager.notify(NOTIFICATION_ID, notificationBuilder.build())
     }
@@ -322,7 +340,6 @@ fun MusicApp(useSystemMediaController: Boolean, onUseSystemMediaControllerChange
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // メイン画面（常に表示、設定時は裏側にいる）
         MusicPlayerScreen(
             songList = songList,
             playlists = playlists,
@@ -331,7 +348,6 @@ fun MusicApp(useSystemMediaController: Boolean, onUseSystemMediaControllerChange
             onNavigateToSettings = { currentScreen = Screen.Settings }
         )
 
-        // 設定画面（オーバーレイ表示）
         if (currentScreen is Screen.Settings) {
             Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                 SettingsScreen(
@@ -343,7 +359,6 @@ fun MusicApp(useSystemMediaController: Boolean, onUseSystemMediaControllerChange
                     onUseSystemMediaControllerChange = onUseSystemMediaControllerChange
                 )
             }
-            // 戻るボタンのハンドリング
             BackHandler {
                 libraryUpdateKey++
                 currentScreen = Screen.Main
@@ -364,14 +379,23 @@ fun MusicPlayerScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     
+    // スキャン進捗状態 (v2.0.9)
+    var isScanning by remember { mutableStateOf(false) }
+    var scanProgress by remember { mutableStateOf(0f) }
+    var scanCount by remember { mutableStateOf(0) }
+    var scanTotal by remember { mutableStateOf(0) } // 推定合計
+    
     // 再生状態
     var currentSong by remember { mutableStateOf<Song?>(null) }
     var currentIndex by remember { mutableStateOf(-1) }
     var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
     
-    // 再生キュー（シャッフル用）
+    // 再生キュー管理 (v2.0.9)
+    // playingQueue: 現在再生用（シャッフルまたは手動並び替え後）
+    // originalQueue: シャッフルOFF時の復帰用（元のコンテキスト順序）
     var playingQueue by remember { mutableStateOf<List<Song>>(emptyList()) }
+    var originalQueue by remember { mutableStateOf<List<Song>>(emptyList()) }
     
     // 再生コントロール
     var repeatMode by remember { mutableStateOf(RepeatMode.OFF) }
@@ -417,19 +441,20 @@ fun MusicPlayerScreen(
             mediaPlayer = MediaPlayer.create(context, song.uri)?.apply {
                 start()
                 setOnCompletionListener {
-                    // 曲終了時の処理 - 次に再生するインデックスを設定
+                    // 曲終了時の処理
                     when (repeatMode) {
                         RepeatMode.ONE -> {
                             seekTo(0)
                             start()
                         }
                         RepeatMode.ALL -> {
+                            // キューの最後なら最初へ
                             val nextIdx = if (currentIndex + 1 >= playingQueue.size) 0 else currentIndex + 1
-                            pendingPlayIndex = nextIdx
+                            playSongAtIndex(nextIdx, playingQueue)
                         }
                         RepeatMode.OFF -> {
                             if (currentIndex + 1 < playingQueue.size) {
-                                pendingPlayIndex = currentIndex + 1
+                                playSongAtIndex(currentIndex + 1, playingQueue)
                             } else {
                                 isPlaying = false
                             }
@@ -462,9 +487,49 @@ fun MusicPlayerScreen(
     
     // シンプルな再生関数（タップ時用）- コンテキスト（リスト）を受け取るように変更
     val playSong: (Song, List<Song>) -> Unit = { song, contextList ->
-        val queue = if (isShuffleEnabled) contextList.shuffled() else contextList
-        val index = queue.indexOf(song).takeIf { it != -1 } ?: 0
+        // 1. 元のキューを保存
+        originalQueue = contextList
+        
+        // 2. シャッフル有効かどうかで初期キューを決定
+        val queue = if (isShuffleEnabled) {
+            // 現在の曲 + 残りの曲をシャッフル
+            val remainder = contextList.filter { it.uri != song.uri }.shuffled()
+            listOf(song) + remainder
+        } else {
+            contextList
+        }
+        
+        // 3. 再生開始
+        val index = queue.indexOfFirst { it.uri == song.uri }.takeIf { it != -1 } ?: 0
         playSongAtIndex(index, queue)
+    }
+
+    // シャッフル切り替え時のロジック (LaunchedEffectで監視、またはToggleActionで実行)
+    // ユーザー要望: ボタンを押すたびに「現在の曲の次以降」をシャッフル
+    val toggleShuffle: () -> Unit = {
+        val newShuffleState = !isShuffleEnabled
+        isShuffleEnabled = newShuffleState
+        
+        if (currentSong != null && originalQueue.isNotEmpty()) {
+            if (newShuffleState) {
+                // OFF -> ON: 現在の曲の次以降をシャッフル
+                val remainder = originalQueue.filter { it.uri != currentSong!!.uri }.shuffled()
+                val newQueue = listOf(currentSong!!) + remainder
+                playingQueue = newQueue
+                currentIndex = 0 // 先頭は現在の曲
+                
+                Toast.makeText(context, "シャッフル ON (リスト再生成)", Toast.LENGTH_SHORT).show()
+            } else {
+                // ON -> OFF: 元の順序に戻す
+                playingQueue = originalQueue
+                // 現在の曲の位置を探し直す
+                val idx = originalQueue.indexOfFirst { it.uri == currentSong!!.uri }
+                if (idx != -1) {
+                    currentIndex = idx
+                }
+                Toast.makeText(context, "シャッフル OFF", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
     
     // 前の曲
@@ -527,7 +592,7 @@ fun MusicPlayerScreen(
                                 isPlaying = true
                             }
                         }
-                        ACTION_SHUFFLE -> { isShuffleEnabled = !isShuffleEnabled }
+                        ACTION_SHUFFLE -> { toggleShuffle() }
                         ACTION_REPEAT -> {
                             repeatMode = when (repeatMode) {
                                 RepeatMode.OFF -> RepeatMode.ALL
@@ -546,6 +611,36 @@ fun MusicPlayerScreen(
                             // Activityを終了
                             (ctx as? android.app.Activity)?.finishAffinity()
                         }
+                        ACTION_SEEK -> {
+                            val pos = intent.getLongExtra(EXTRA_SEEK_POS, 0L)
+                            currentMediaPlayer?.seekTo(pos.toInt())
+                            currentPosition = pos.toInt()
+                        }
+                        MusicScanService.ACTION_SCAN_PROGRESS -> {
+                            val p = intent.getFloatExtra(MusicScanService.EXTRA_PROGRESS, 0f)
+                            val c = intent.getIntExtra(MusicScanService.EXTRA_CURRENT_COUNT, 0)
+                            scanProgress = p
+                            scanCount = c
+                            // Totalは推定値だが、Progressから逆算またはServiceから受け取る必要があるが...
+                            // 今回は簡易的にService側でProgressしているので、そのまま表示
+                            isScanning = (p < 1.0f)
+                        }
+                        MusicScanService.ACTION_SCAN_COMPLETE -> {
+                            isScanning = false
+                            scanProgress = 1.0f
+                            // ScanResultHolderから結果を取得
+                            val newSongs = ScanResultHolder.scannedSongs ?: emptyList()
+                            if (newSongs.isNotEmpty()) {
+                                // 既存リストとマージ（重複排除）
+                                val merged = (songList + newSongs).distinctBy { it.uri }
+                                onSongListChange(merged.sortedBy { it.title }) // タイトル順
+                                coroutineScope.launch { saveLibraryToFile(context, merged) }
+                                Toast.makeText(context, "スキャン完了: ${newSongs.size}曲追加", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "スキャン完了: 新規ファイルなし", Toast.LENGTH_SHORT).show()
+                            }
+                            ScanResultHolder.scannedSongs = null // Clear
+                        }
                     }
                 }
             }
@@ -557,6 +652,8 @@ fun MusicPlayerScreen(
             addAction(ACTION_SHUFFLE)
             addAction(ACTION_REPEAT)
             addAction(ACTION_STOP)
+            addAction(MusicScanService.ACTION_SCAN_PROGRESS) // スキャン進捗受信
+            addAction(MusicScanService.ACTION_SCAN_COMPLETE) // スキャン完了受信
         }
         // RECEIVER_NOT_EXPORTEDで同一パッケージからのブロードキャストのみ受信
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
@@ -577,13 +674,43 @@ fun MusicPlayerScreen(
         }
     }
     
+    // スキャン制御関数 (Service起動)
+    fun startScanService(uris: List<Uri>?) {
+        val targetUris = uris ?: getUriList(context, KEY_SOURCE_FOLDER_URIS)
+        if (targetUris.isEmpty()) {
+            Toast.makeText(context, "フォルダが選択されていません", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val intent = Intent(context, MusicScanService::class.java).apply {
+            action = MusicScanService.ACTION_START_SCAN
+            putParcelableArrayListExtra(MusicScanService.EXTRA_SCAN_URIS, ArrayList(targetUris))
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent)
+        } else {
+            context.startService(intent)
+        }
+        isScanning = true
+        scanProgress = 0f
+        scanCount = 0
+        scanTotal = 0
+    }
+    
     // メイン画面とフルスクリーンプレイヤーを重ね合わせ（閉じるアニメーションを正しく動作させるため）
     Box(modifier = Modifier.fillMaxSize()) {
         // メイン画面（常に表示）
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text("Music Player") },
+                    title = { 
+                         Column {
+                             Text("Music Player")
+                             if (isScanning) {
+                                 Text("スキャン中: ${scanCount}曲 ($scanTotal)", style = MaterialTheme.typography.bodySmall)
+                                 LinearProgressIndicator(progress = { scanProgress }, modifier = Modifier.fillMaxWidth().height(2.dp))
+                             }
+                         }
+                    },
                     actions = {
                         IconButton(onClick = onNavigateToSettings) {
                             Icon(Icons.Default.Settings, contentDescription = "Settings")
@@ -606,7 +733,7 @@ fun MusicPlayerScreen(
                             isPlaying = !isPlaying
                         },
                         onNext = playNext,
-                        onShuffleToggle = { isShuffleEnabled = !isShuffleEnabled },
+                        onShuffleToggle = { toggleShuffle() },
                         onRepeatToggle = {
                             repeatMode = when (repeatMode) {
                                 RepeatMode.OFF -> RepeatMode.ALL
@@ -662,6 +789,7 @@ fun MusicPlayerScreen(
                     duration = duration,
                     repeatMode = repeatMode,
                     isShuffleEnabled = isShuffleEnabled,
+                    playingQueue = playingQueue,
                     onPlayPause = {
                         if (isPlaying) mediaPlayer?.pause() else mediaPlayer?.start()
                         isPlaying = !isPlaying
@@ -679,7 +807,16 @@ fun MusicPlayerScreen(
                             RepeatMode.ONE -> RepeatMode.OFF
                         }
                     },
-                    onShuffleToggle = { isShuffleEnabled = !isShuffleEnabled },
+                    onShuffleToggle = { toggleShuffle() },
+                    onReorder = { from, to ->
+                        if (from in playingQueue.indices && to in playingQueue.indices) {
+                            val newList = playingQueue.toMutableList()
+                            Collections.swap(newList, from, to)
+                            playingQueue = newList
+                            if (currentIndex == from) currentIndex = to
+                            else if (currentIndex == to) currentIndex = from
+                        }
+                    },
                     onDismiss = { showFullPlayer = false }
                 )
             }
@@ -888,12 +1025,14 @@ fun FullScreenPlayer(
     duration: Int,
     repeatMode: RepeatMode,
     isShuffleEnabled: Boolean,
+    playingQueue: List<Song> = emptyList(),
     onPlayPause: () -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onSeek: (Float) -> Unit,
     onRepeatToggle: () -> Unit,
     onShuffleToggle: () -> Unit,
+    onReorder: (Int, Int) -> Unit = { _, _ -> },
     onDismiss: () -> Unit
 ) {
     var offsetY by remember { mutableStateOf(0f) }
@@ -1275,9 +1414,24 @@ fun SettingsScreen(
                                     updateReleaseNotes = result.third
                                     
                                     if (latestVersion != null) {
-                                        val current = APP_VERSION.replace(".", "").toIntOrNull() ?: 0
-                                        val latest = latestVersion!!.replace(".", "").replace("v", "").toIntOrNull() ?: 0
-                                        if (latest > current) {
+                                        // セマンティックバージョニング比較 (v2.0.8 vs v2.0.9)
+                                        val normalize = { v: String -> v.removePrefix("v").split(".").map { it.toIntOrNull() ?: 0 } }
+                                        val currentParts = normalize(APP_VERSION)
+                                        val latestParts = normalize(latestVersion!!)
+                                        
+                                        var isNewer = false
+                                        val length = maxOf(currentParts.size, latestParts.size)
+                                        for (i in 0 until length) {
+                                            val c = currentParts.getOrElse(i) { 0 }
+                                            val l = latestParts.getOrElse(i) { 0 }
+                                            if (l > c) {
+                                                isNewer = true
+                                                break
+                                            }
+                                            if (l < c) break
+                                        }
+
+                                        if (isNewer) {
                                             updateInfo = "新しいバージョン $latestVersion が利用可能です"
                                             showUpdateConfirmDialog = true // 更新があればダイアログを表示
                                         } else {
@@ -1381,6 +1535,11 @@ fun PlaylistTab(playlists: List<Playlist>, songList: List<Song>, currentSong: So
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     var selectedPlaylist by remember { mutableStateOf<Playlist?>(null) }
+    // 戻るボタンのハンドリング
+    BackHandler(enabled = selectedPlaylist != null) {
+        selectedPlaylist = null
+    }
+
     // 削除確認ダイアログ用の状態
     var playlistToDelete by remember { mutableStateOf<Playlist?>(null) }
     
@@ -1582,6 +1741,15 @@ fun ArtistFolderTab(songList: List<Song>, onSongClick: (Song, List<Song>) -> Uni
     var selectedArtist by remember { mutableStateOf<String?>(null) }
     var selectedAlbum by remember { mutableStateOf<String?>(null) }
 
+    // 戻るボタンのハンドリング
+    BackHandler(enabled = selectedArtist != null) {
+        if (selectedAlbum != null) {
+            selectedAlbum = null
+        } else {
+            selectedArtist = null
+        }
+    }
+
     when {
         // 3. アーティストとアルバムが選択されたら、曲リストを表示
         selectedArtist != null && selectedAlbum != null -> {
@@ -1643,6 +1811,11 @@ fun ArtistFolderTab(songList: List<Song>, onSongClick: (Song, List<Song>) -> Uni
 @Composable
 fun AlbumFolderTab(songList: List<Song>, onSongClick: (Song, List<Song>) -> Unit) {
     var selectedAlbum by remember { mutableStateOf<String?>(null) }
+
+    // 戻るボタンのハンドリング
+    BackHandler(enabled = selectedAlbum != null) {
+        selectedAlbum = null
+    }
 
     if (selectedAlbum != null) {
         val songsByAlbum = remember(songList, selectedAlbum) {
@@ -2213,15 +2386,7 @@ fun DefaultPreview() {
     }
 }
 
-// --- 通知関連の定数 ---
-const val NOTIFICATION_CHANNEL_ID = "music_player_channel"
-const val NOTIFICATION_ID = 1
-const val ACTION_PREVIOUS = "com.example.musicplayer.ACTION_PREVIOUS"
-const val ACTION_PLAY_PAUSE = "com.example.musicplayer.ACTION_PLAY_PAUSE"
-const val ACTION_NEXT = "com.example.musicplayer.ACTION_NEXT"
-const val ACTION_SHUFFLE = "com.example.musicplayer.ACTION_SHUFFLE"
-const val ACTION_REPEAT = "com.example.musicplayer.ACTION_REPEAT"
-const val ACTION_STOP = "com.example.musicplayer.ACTION_STOP"
+// --- 通知からのアクションを受け取るBroadcastReceiver ---
 
 /**
  * 通知からのアクションを受け取るBroadcastReceiver
