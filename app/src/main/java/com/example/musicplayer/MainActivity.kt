@@ -85,7 +85,7 @@ import java.util.Collections
 
 // --- アプリ情報 ---
 // v2.0.4: プログレス表示の復活、スキャン高速化（メタデータ取得なし）は維持
-private    const val APP_VERSION = "v2.0.5"
+private    const val APP_VERSION = "v2.0.6"
 private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-12 v28"
 
 // --- データ構造の定義 ---
@@ -1257,7 +1257,7 @@ fun SettingsScreen(onNavigateBack: () -> Unit) {
                 HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
                 Text("バージョン情報", style = MaterialTheme.typography.titleLarge)
                 Text("App Version: $APP_VERSION")
-                Text("Built by Gemini: $GEMINI_MODEL_VERSION")
+                Text("App Version: $APP_VERSION")
             }
         }
     }
@@ -1742,8 +1742,46 @@ private suspend fun loadPlaylistsFromFile(context: Context, allSongs: List<Song>
         return@withContext null
     }
 }
-private suspend fun countFilesInDirectory(context: Context, directoryUri: Uri): Int = withContext(Dispatchers.IO) {
     var count = 0
+    
+    // 高速化: Uriから実際のファイルパスを推測してjava.io.Fileを使用する
+    var useFileApi = false
+    var rootFile: File? = null
+    try {
+        if (DocumentsContract.isTreeUri(directoryUri)) {
+            val docId = DocumentsContract.getTreeDocumentId(directoryUri)
+            val split = docId.split(":")
+            if (split.size >= 2) {
+                val type = split[0]
+                val pathStr = split[1]
+                val targetPath = if (type == "primary") {
+                    "/storage/emulated/0/$pathStr"
+                } else {
+                    "/storage/$type/$pathStr"
+                }
+                val file = File(targetPath)
+                if (file.exists() && file.isDirectory && file.canRead()) {
+                    rootFile = file
+                    useFileApi = true
+                }
+            }
+        }
+    } catch (e: Exception) { e.printStackTrace() }
+
+    if (useFileApi && rootFile != null) {
+        try {
+            // 高速カウント
+            count = rootFile!!.walk()
+                .filter { it.isFile && (it.extension.equals("mp3", true) || it.extension.equals("m4a", true) || it.extension.equals("flac", true) || it.extension.equals("wav", true) || it.extension.equals("aac", true) || it.extension.equals("ogg", true)) }
+                .count()
+            return@withContext count
+        } catch (e: Exception) {
+            e.printStackTrace()
+            useFileApi = false
+        }
+    }
+
+    // 従来の方法（バックアップ）
     val contentResolver = context.contentResolver
     val documentsTree = DocumentsContract.buildDocumentUriUsingTree(directoryUri, DocumentsContract.getTreeDocumentId(directoryUri))
     fun traverse(currentUri: Uri) {
