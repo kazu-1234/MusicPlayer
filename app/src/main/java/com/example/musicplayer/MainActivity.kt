@@ -1056,14 +1056,18 @@ fun FullScreenPlayer(
             onDismissRequest = { showQueue = false },
             title = { Text("再生キュー (${playingQueue.size}曲)") },
             text = {
-                Column(modifier = Modifier.heightIn(max = 400.dp)) {
-                    playingQueue.forEachIndexed { index, song ->
+                LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
+                    itemsIndexed(
+                        items = playingQueue,
+                        key = { _, song -> song.uri.toString() }
+                    ) { index, song ->
                         val isCurrent = song.uri == currentSong.uri
                         val isDragging = draggedIndex == index
                         
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .animateItem()
                                 .offset { IntOffset(0, if (isDragging) dragOffset.toInt() else 0) }
                                 .background(
                                     when {
