@@ -18,9 +18,8 @@ Android用の音楽プレイヤーアプリです。
 
 ## セットアップ
 
-1. Android Studioでプロジェクトを開く
-2. Build → Make Project
-3. Run でデバイスにインストール
+1. ReleaseよりAPKをダウンロード
+2. 1AndroidデバイスにAPKファイルをインストール
 
 ## バージョン
 
