@@ -7,6 +7,7 @@ package com.example.musicplayer
 
 import android.content.Context
 import android.content.Intent
+import android.app.Activity
 import android.app.DownloadManager
 import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
@@ -33,7 +34,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.*
+import android.view.WindowManager
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -94,9 +96,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.1.3: キュードラッグ修正、スキャン進捗表示改善
-private const val APP_VERSION = "v2.1.3"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v33"
+// v2.1.4: スキャン中のスリープ防止、コンパイル修正
+private const val APP_VERSION = "v2.1.4"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v34"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -1399,6 +1401,19 @@ fun SettingsScreen(
     var scanCount by remember { mutableStateOf(0) }
     // プレイリスト用ベースパス設定
     var playlistBasePath by remember { mutableStateOf(getPlaylistBasePath(context)) }
+
+    // スキャン中は画面をスリープさせない
+    DisposableEffect(isScanning) {
+        val window = (context as? Activity)?.window
+        if (isScanning) {
+            window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        onDispose {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
 
     val folderPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree(),
