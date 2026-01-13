@@ -247,15 +247,19 @@ class MusicScanService : Service() {
                     .toList()
                 val total = allFiles.size 
                 if (total > 0) {
-                    // 並列処理: ファイルをチャンクに分割して並列でメタデータ取得
-                    val chunkSize = 10 // 10ファイルずつ並列処理
-                    val results = allFiles.chunked(chunkSize).flatMap { chunk ->
-                        chunk.map { file ->
+                    // 並列処理: 全ファイルを10並列で処理
+                    val semaphore = kotlinx.coroutines.sync.Semaphore(10) // 最大10並列
+                    var processedLocal = java.util.concurrent.atomic.AtomicInteger(0)
+                    
+                    val results = coroutineScope {
+                        allFiles.map { file ->
                             async {
-                                processedCount++
-                                onProgress(processedCount.toFloat().coerceAtMost(total.toFloat()) / total.toFloat(), processedCount)
-                                
+                                semaphore.acquire()
                                 try {
+                                    val currentCount = processedLocal.incrementAndGet()
+                                    val progress = currentCount.toFloat() / total.toFloat()
+                                    onProgress(progress, currentCount)
+                                    
                                     val retrieverLocal = MediaMetadataRetriever()
                                     val filePath = file.absolutePath
                                     val title = file.nameWithoutExtension
@@ -275,11 +279,13 @@ class MusicScanService : Service() {
                                     } catch (e: Exception) { 
                                         try { retrieverLocal.release() } catch (ignored: Exception) {}
                                     }
-
+                                    
                                     Song(Uri.fromFile(file), file.name, songTitle, songArtist, songAlbum, 0, trackNumber, directoryUri)
                                 } catch (e: Exception) { 
                                     e.printStackTrace()
                                     null 
+                                } finally {
+                                    semaphore.release()
                                 }
                             }
                         }.awaitAll()

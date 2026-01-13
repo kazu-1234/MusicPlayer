@@ -90,9 +90,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.1.0: スキャン進捗表示改善、キューUI改善（ドラッグ並び替えアニメーション）
-private const val APP_VERSION = "v2.1.0"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-13 v30"
+// v2.1.1: 設定UIリファクタ（バージョン+アップデート統合）、並列スキャン修正
+private const val APP_VERSION = "v2.1.1"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-13 v31"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -1534,7 +1534,11 @@ fun SettingsScreen(
             }
             item {
                 HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
-                Text("アップデート確認", style = MaterialTheme.typography.titleLarge)
+                
+                // バージョン情報 + アップデート統合
+                Text("バージョン情報", style = MaterialTheme.typography.titleLarge)
+                Spacer(Modifier.height(8.dp))
+                Text("App Version: $APP_VERSION", style = MaterialTheme.typography.bodyLarge)
                 Spacer(Modifier.height(8.dp))
                 
                 var isCheckingUpdate by remember { mutableStateOf(false) }
@@ -1542,60 +1546,54 @@ fun SettingsScreen(
                 var latestVersion by remember { mutableStateOf<String?>(null) }
                 var downloadUrl by remember { mutableStateOf<String?>(null) }
                 var updateReleaseNotes by remember { mutableStateOf<String?>(null) }
-                var showUpdateConfirmDialog by remember { mutableStateOf(false) } // ダイアログ制御用
+                var showUpdateConfirmDialog by remember { mutableStateOf(false) }
                 
-                Text("現在のバージョン: $APP_VERSION", style = MaterialTheme.typography.bodyMedium)
-                Spacer(Modifier.height(8.dp))
-                
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Button(
-                        onClick = {
-                            isCheckingUpdate = true
-                            updateInfo = null
-                            coroutineScope.launch {
-                                try {
-                                    val result = withContext(Dispatchers.IO) {
-                                        checkForUpdate()
-                                    }
-                                    latestVersion = result.first
-                                    downloadUrl = result.second
-                                    updateReleaseNotes = result.third
-                                    
-                                    if (latestVersion != null) {
-                                        // セマンティックバージョニング比較 (v2.0.8 vs v2.0.9)
-                                        val normalize = { v: String -> v.removePrefix("v").split(".").map { it.toIntOrNull() ?: 0 } }
-                                        val currentParts = normalize(APP_VERSION)
-                                        val latestParts = normalize(latestVersion!!)
-                                        
-                                        var isNewer = false
-                                        val length = maxOf(currentParts.size, latestParts.size)
-                                        for (i in 0 until length) {
-                                            val c = currentParts.getOrElse(i) { 0 }
-                                            val l = latestParts.getOrElse(i) { 0 }
-                                            if (l > c) {
-                                                isNewer = true
-                                                break
-                                            }
-                                            if (l < c) break
-                                        }
-
-                                        if (isNewer) {
-                                            updateInfo = "新しいバージョン $latestVersion が利用可能です"
-                                            showUpdateConfirmDialog = true // 更新があればダイアログを表示
-                                        } else {
-                                            updateInfo = "最新バージョンです"
-                                        }
-                                    }
-                                } catch (e: Exception) {
-                                    updateInfo = "エラー: ${e.message}"
+                Button(
+                    onClick = {
+                        isCheckingUpdate = true
+                        updateInfo = null
+                        coroutineScope.launch {
+                            try {
+                                val result = withContext(Dispatchers.IO) {
+                                    checkForUpdate()
                                 }
-                                isCheckingUpdate = false
+                                latestVersion = result.first
+                                downloadUrl = result.second
+                                updateReleaseNotes = result.third
+                                
+                                if (latestVersion != null) {
+                                    val normalize = { v: String -> v.removePrefix("v").split(".").map { it.toIntOrNull() ?: 0 } }
+                                    val currentParts = normalize(APP_VERSION)
+                                    val latestParts = normalize(latestVersion!!)
+                                    
+                                    var isNewer = false
+                                    val length = maxOf(currentParts.size, latestParts.size)
+                                    for (i in 0 until length) {
+                                        val c = currentParts.getOrElse(i) { 0 }
+                                        val l = latestParts.getOrElse(i) { 0 }
+                                        if (l > c) {
+                                            isNewer = true
+                                            break
+                                        }
+                                        if (l < c) break
+                                    }
+
+                                    if (isNewer) {
+                                        updateInfo = "新しいバージョン $latestVersion が利用可能です"
+                                        showUpdateConfirmDialog = true
+                                    } else {
+                                        updateInfo = "最新バージョンです"
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                updateInfo = "エラー: ${e.message}"
                             }
-                        },
-                        enabled = !isCheckingUpdate
-                    ) {
-                        Text(if (isCheckingUpdate) "確認中..." else "更新を確認")
-                    }
+                            isCheckingUpdate = false
+                        }
+                    },
+                    enabled = !isCheckingUpdate
+                ) {
+                    Text(if (isCheckingUpdate) "確認中..." else "更新を確認")
                 }
                 
                 updateInfo?.let {
@@ -1630,11 +1628,6 @@ fun SettingsScreen(
                         }
                     )
                 }
-            }
-            item {
-                HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
-                Text("バージョン情報", style = MaterialTheme.typography.titleLarge)
-                Text("App Version: $APP_VERSION")
             }
         }
     }
