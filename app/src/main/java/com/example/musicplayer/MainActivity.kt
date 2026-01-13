@@ -1382,6 +1382,7 @@ fun SettingsScreen(
     var tabOrder by remember { mutableStateOf(getTabOrder(context)) }
     var isScanning by remember { mutableStateOf(false) }
     var scanProgress by remember { mutableStateOf(0f) }
+    var scanCount by remember { mutableStateOf(0) }
     // プレイリスト用ベースパス設定
     var playlistBasePath by remember { mutableStateOf(getPlaylistBasePath(context)) }
 
@@ -1400,7 +1401,10 @@ fun SettingsScreen(
 
                     val totalFiles = countFilesInDirectory(context, uri)
                     val newSongs = getAudioFilesFromDirectory(context, uri, totalFiles) { progress ->
-                        launch(Dispatchers.Main) { scanProgress = progress }
+                        launch(Dispatchers.Main) { 
+                            scanProgress = progress
+                            scanCount = (progress * totalFiles).toInt()
+                        }
                     }
                     val existingSongs = loadLibraryFromFile(context) ?: emptyList()
                     val combinedSongs = (existingSongs + newSongs).distinctBy { it.uri }
@@ -1469,7 +1473,10 @@ fun SettingsScreen(
                                 val cleanLibrary = currentLibrary.filterNot { it.sourceFolderUri == uri }
                                 val count = countFilesInDirectory(context, uri)
                                 val newSongs = getAudioFilesFromDirectory(context, uri, count) { progress ->
-                                     launch(Dispatchers.Main) { scanProgress = progress }
+                                     launch(Dispatchers.Main) { 
+                                         scanProgress = progress
+                                         scanCount = (progress * count).toInt()
+                                     }
                                 }
                                 val combined = (cleanLibrary + newSongs).distinctBy { it.uri }
                                 saveLibraryToFile(context, combined)
@@ -1482,7 +1489,7 @@ fun SettingsScreen(
 
                 if (isScanning) {
                     LinearProgressIndicator(progress = { scanProgress })
-                    Text("読み込み中... ${(scanProgress * 100).toInt()}%")
+                    Text("読み込み中... ${(scanProgress * 100).toInt()}% (${scanCount}曲)")
                 }
                 HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
             }
