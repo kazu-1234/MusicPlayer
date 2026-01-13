@@ -83,6 +83,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -96,9 +98,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.1.4: スキャン中のスリープ防止、コンパイル修正
-private const val APP_VERSION = "v2.1.4"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v34"
+// v2.1.5: キューアニメーションのオフセット計算修正（dp->px変換）
+private const val APP_VERSION = "v2.1.5"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v35"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -1077,7 +1079,12 @@ fun FullScreenPlayer(
                             val isDragging = draggedIndex == index
                             
                             // 行高さ（padding含む）
-                            val itemHeight = 56
+                            // 行高さ（padding 8+8=16dp + コンテンツ高さ〜40dp? → 合計約72dp?）
+                            // 正確な計算のため density を使用
+                            val density = LocalDensity.current
+                            // UI定義を見ると: padding(vertical=8) + Text(bodyMedium)+Text(bodySmall) -> およそ 64dp 〜 72dp
+                            // 修正: 70dpとして計算
+                            val itemHeightPx = with(density) { 70.dp.toPx() }.toInt()
                             
                             // アニメーション用オフセット
                             val animatedOffset by animateIntAsState(
@@ -1085,11 +1092,11 @@ fun FullScreenPlayer(
                                     dragOffset.toInt()
                                 } else if (draggedIndex != null) {
                                     val draggedPos = draggedIndex!!
-                                    val moveBy = (dragOffset / itemHeight).toInt()
+                                    val moveBy = (dragOffset / itemHeightPx).toInt()
                                     val targetPos = (draggedPos + moveBy).coerceIn(0, playingQueue.size - 1)
                                     when {
-                                        draggedPos < index && targetPos >= index -> -itemHeight
-                                        draggedPos > index && targetPos <= index -> itemHeight
+                                        draggedPos < index && targetPos >= index -> -itemHeightPx
+                                        draggedPos > index && targetPos <= index -> itemHeightPx
                                         else -> 0
                                     }
                                 } else 0,
@@ -1151,7 +1158,8 @@ fun FullScreenPlayer(
                                                 dragOffset = 0f
                                             },
                                             onDragEnd = {
-                                                val moveBy = (dragOffset / itemHeight).toInt()
+                                                // ドラッグ終了時の処理（px単位で計算）
+                                                val moveBy = (dragOffset / itemHeightPx).toInt()
                                                 val targetIndex = (index + moveBy).coerceIn(0, playingQueue.size - 1)
                                                 if (targetIndex != index) {
                                                     onReorder(index, targetIndex)
