@@ -2564,12 +2564,7 @@ fun DefaultPreview() {
     }
 }
 
-// --- 通知からのアクションを受け取るBroadcastReceiver ---
-
-/**
- * 通知からのアクションを受け取るBroadcastReceiver
- * アプリ内にブロードキャストを転送する
- */
+// --- 共通コンポーネント ---
 // --- 共通コンポーネント ---
 
 @Composable
@@ -2629,7 +2624,9 @@ fun VerticalScrollbar(
 
 /**
  * 通知からのアクションを受け取るBroadcastReceiver
-
+ * アプリ内にブロードキャストを転送する
+ */
+class MusicNotificationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action ?: return
         
