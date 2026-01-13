@@ -94,9 +94,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.1.2: 文字化け検出強化
-private const val APP_VERSION = "v2.1.2"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-13 v32"
+// v2.2.0: ファイルエクスプローラーモード（高速スキャン）
+private const val APP_VERSION = "v2.2.0"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-13 v33"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -2362,55 +2362,36 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
             val total = allFiles.size 
             
             if (total > 0) {
-                // 順次処理（安定性優先）
+                // ファイルエクスプローラーモード: フォルダ構造からメタデータを取得（高速）
                 var processedCount = 0
                 
                 allFiles.forEach { file ->
                     processedCount++
                     onProgress(processedCount.toFloat() / total.toFloat())
                     
-                    val filePath = file.absolutePath
-                    val title = file.nameWithoutExtension
+                    // ファイル名から曲タイトルを取得
+                    val songTitle = file.nameWithoutExtension
                     
-                    var songTitle = title
-                    var songArtist = "Unknown Artist"
-                    var songAlbum = "Unknown Album"
-                    var trackNumber = 0
+                    // フォルダ構造: [音楽フォルダ]/アーティスト/アルバム/曲.flac
+                    val parentFile = file.parentFile  // アルバムフォルダ
+                    val grandParentFile = parentFile?.parentFile  // アーティストフォルダ
+                    
+                    val songAlbum = parentFile?.name ?: "Unknown Album"
+                    val songArtist = grandParentFile?.name ?: "Unknown Artist"
+                    
+                    // トラック番号: ファイル名の先頭数字から取得（例: "01. 曲名" → 1）
+                    val trackNumber = songTitle.takeWhile { it.isDigit() }.toIntOrNull() ?: 0
 
-                    try {
-                        val retrieverLocal = MediaMetadataRetriever()
-                        try {
-                            retrieverLocal.setDataSource(filePath)
-                            val extractedTitle = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
-                            val extractedArtist = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
-                            val extractedAlbum = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
-                            
-                            // 文字化け検出: U+FFFD、制御文字、Shift-JIS誤変換パターンをチェック
-                            fun isGarbled(s: String?): Boolean {
-                                if (s == null) return false
-                                // U+FFFDまたは制御文字
-                                if (s.contains('\uFFFD') || s.any { it.code < 32 && it != '\t' && it != '\n' && it != '\r' }) return true
-                                // Shift-JIS→UTF-8誤変換の典型パターン（ã,å,æ,ç,è,é の連続）
-                                val mojibakeChars = listOf('ã', 'å', 'æ', 'ç', 'è', 'é', 'ê', 'ë', 'ì', 'í', 'î', 'ï')
-                                val mojibakeCount = s.count { mojibakeChars.contains(it) }
-                                // 文字列の20%以上がmojibake文字なら文字化けと判定
-                                return s.length > 0 && mojibakeCount.toFloat() / s.length.toFloat() > 0.2f
-                            }
-                            
-                            songTitle = if (isGarbled(extractedTitle)) title else (extractedTitle ?: title)
-                            songArtist = if (isGarbled(extractedArtist)) "Unknown Artist" else (extractedArtist ?: "Unknown Artist")
-                            songAlbum = if (isGarbled(extractedAlbum)) "Unknown Album" else (extractedAlbum ?: "Unknown Album")
-                            
-                            val trackString = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
-                            trackNumber = trackString?.substringBefore("/")?.toIntOrNull() ?: 0
-                        } finally {
-                            try { retrieverLocal.release() } catch (ignored: Exception) {}
-                        }
-                    } catch (e: Exception) {
-                        // メタデータ取得失敗時はデフォルト値
-                    }
-
-                    songList.add(Song(Uri.fromFile(file), file.name, songTitle, songArtist, songAlbum, 0, trackNumber, directoryUri))
+                    songList.add(Song(
+                        uri = Uri.fromFile(file),
+                        displayName = file.name,
+                        title = songTitle,
+                        artist = songArtist,
+                        album = songAlbum,
+                        playCount = 0,
+                        trackNumber = trackNumber,
+                        sourceFolderUri = directoryUri
+                    ))
                 }
             } else {
                  useFileApi = false // 0件の場合はフォールバック

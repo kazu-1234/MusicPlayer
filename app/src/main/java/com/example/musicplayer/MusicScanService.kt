@@ -247,66 +247,37 @@ class MusicScanService : Service() {
                     .toList()
                 val total = allFiles.size 
                 if (total > 0) {
-                    // 並列処理: 全ファイルを50並列で処理
-                    val semaphore = kotlinx.coroutines.sync.Semaphore(50) // 最大50並列
-                    var processedLocal = java.util.concurrent.atomic.AtomicInteger(0)
+                    // ファイルエクスプローラーモード: フォルダ構造からメタデータを取得（高速）
+                    var processedCount = 0
                     
-                    val results = coroutineScope {
-                        allFiles.map { file ->
-                            async {
-                                semaphore.acquire()
-                                try {
-                                    val currentCount = processedLocal.incrementAndGet()
-                                    val progress = currentCount.toFloat() / total.toFloat()
-                                    onProgress(progress, currentCount)
-                                    
-                                    val retrieverLocal = MediaMetadataRetriever()
-                                    val filePath = file.absolutePath
-                                    val title = file.nameWithoutExtension
-                                    var songTitle = title
-                                    var songArtist = "Unknown Artist"
-                                    var songAlbum = "Unknown Album"
-                                    var trackNumber = 0
+                    allFiles.forEach { file ->
+                        processedCount++
+                        onProgress(processedCount.toFloat() / total.toFloat(), processedCount)
+                        
+                        // ファイル名から曲タイトルを取得
+                        val songTitle = file.nameWithoutExtension
+                        
+                        // フォルダ構造: [音楽フォルダ]/アーティスト/アルバム/曲.flac
+                        val parentFile = file.parentFile  // アルバムフォルダ
+                        val grandParentFile = parentFile?.parentFile  // アーティストフォルダ
+                        
+                        val songAlbum = parentFile?.name ?: "Unknown Album"
+                        val songArtist = grandParentFile?.name ?: "Unknown Artist"
+                        
+                        // トラック番号: ファイル名の先頭数字から取得
+                        val trackNumber = songTitle.takeWhile { it.isDigit() }.toIntOrNull() ?: 0
 
-                                    try {
-                                        retrieverLocal.setDataSource(filePath)
-                                        val extractedTitle = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
-                                        val extractedArtist = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
-                                        val extractedAlbum = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
-                                        
-                                        // 文字化け検出: U+FFFD、制御文字、Shift-JIS誤変換パターンをチェック
-                                        fun isGarbled(s: String?): Boolean {
-                                            if (s == null) return false
-                                            // U+FFFDまたは制御文字
-                                            if (s.contains('\uFFFD') || s.any { it.code < 32 && it != '\t' && it != '\n' && it != '\r' }) return true
-                                            // Shift-JIS→UTF-8誤変換の典型パターン
-                                            val mojibakeChars = listOf('ã', 'å', 'æ', 'ç', 'è', 'é', 'ê', 'ë', 'ì', 'í', 'î', 'ï')
-                                            val mojibakeCount = s.count { mojibakeChars.contains(it) }
-                                            return s.length > 0 && mojibakeCount.toFloat() / s.length.toFloat() > 0.2f
-                                        }
-                                        
-                                        songTitle = if (isGarbled(extractedTitle)) title else (extractedTitle ?: title)
-                                        songArtist = if (isGarbled(extractedArtist)) "Unknown Artist" else (extractedArtist ?: "Unknown Artist")
-                                        songAlbum = if (isGarbled(extractedAlbum)) "Unknown Album" else (extractedAlbum ?: "Unknown Album")
-                                        
-                                        val trackString = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
-                                        trackNumber = trackString?.substringBefore("/")?.toIntOrNull() ?: 0
-                                        retrieverLocal.release()
-                                    } catch (e: Exception) { 
-                                        try { retrieverLocal.release() } catch (ignored: Exception) {}
-                                    }
-                                    
-                                    Song(Uri.fromFile(file), file.name, songTitle, songArtist, songAlbum, 0, trackNumber, directoryUri)
-                                } catch (e: Exception) { 
-                                    e.printStackTrace()
-                                    null 
-                                } finally {
-                                    semaphore.release()
-                                }
-                            }
-                        }.awaitAll()
+                        songList.add(Song(
+                            uri = Uri.fromFile(file),
+                            displayName = file.name,
+                            title = songTitle,
+                            artist = songArtist,
+                            album = songAlbum,
+                            playCount = 0,
+                            trackNumber = trackNumber,
+                            sourceFolderUri = directoryUri
+                        ))
                     }
-                    songList.addAll(results.filterNotNull())
                 } else {
                      useFileApi = false 
                 }
