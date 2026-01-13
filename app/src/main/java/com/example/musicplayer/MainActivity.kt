@@ -1074,27 +1074,40 @@ fun FullScreenPlayer(
                             val isCurrent = song.uri == currentSong.uri
                             val isDragging = draggedIndex == index
                             
-                            // ドラッグ中のオフセット計算（簡素化）
-                            val itemHeight = 64
+                            // 行高さ（padding含む）
+                            val itemHeight = 56
+                            
+                            // アニメーション用オフセット
+                            val animatedOffset by animateIntAsState(
+                                targetValue = if (isDragging) {
+                                    dragOffset.toInt()
+                                } else if (draggedIndex != null) {
+                                    val draggedPos = draggedIndex!!
+                                    val moveBy = (dragOffset / itemHeight).toInt()
+                                    val targetPos = (draggedPos + moveBy).coerceIn(0, playingQueue.size - 1)
+                                    when {
+                                        draggedPos < index && targetPos >= index -> -itemHeight
+                                        draggedPos > index && targetPos <= index -> itemHeight
+                                        else -> 0
+                                    }
+                                } else 0,
+                                label = "queueItemOffset"
+                            )
                             
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .offset {
-                                        // ドラッグ中のアイテムのみオフセット
-                                        val yOffset = if (isDragging) dragOffset.toInt() else 0
-                                        IntOffset(0, yOffset) 
-                                }
-                                .background(
-                                    when {
-                                        isDragging -> MaterialTheme.colorScheme.secondaryContainer
-                                        isCurrent -> MaterialTheme.colorScheme.primaryContainer
-                                        else -> Color.Transparent
-                                    }
-                                )
-                                .padding(vertical = 8.dp, horizontal = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                                    .offset { IntOffset(0, animatedOffset) }
+                                    .background(
+                                        when {
+                                            isDragging -> MaterialTheme.colorScheme.secondaryContainer
+                                            isCurrent -> MaterialTheme.colorScheme.primaryContainer
+                                            else -> Color.Transparent
+                                        }
+                                    )
+                                    .padding(vertical = 8.dp, horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                             // 曲番号
                             Text(
                                 "${index + 1}",
