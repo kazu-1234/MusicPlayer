@@ -2015,7 +2015,40 @@ fun AlbumFolderTab(songList: List<Song>, onSongClick: (Song, List<Song>) -> Unit
 
 @Composable
 fun SongList(songs: List<Song>, currentSong: Song?, onSongClick: (Song) -> Unit) {
-    LazyColumn(modifier = Modifier.fillMaxWidth()) { items(songs) { song -> SongListItem(song, (song == currentSong), onSongClick) } }
+    val listState = rememberLazyListState()
+    Box(modifier = Modifier.fillMaxWidth()) {
+        LazyColumn(state = listState, modifier = Modifier.fillMaxWidth()) { 
+            items(songs) { song -> SongListItem(song, (song == currentSong), onSongClick) } 
+        }
+        // スクロールインジケーター（右側）
+        if (songs.size > 10) {
+            val scrollProgress = if (listState.layoutInfo.totalItemsCount > 0) {
+                listState.firstVisibleItemIndex.toFloat() / listState.layoutInfo.totalItemsCount.toFloat()
+            } else 0f
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .padding(vertical = 8.dp)
+            ) {
+                // スクロールトラック
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+                )
+                // スクロールサム
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .fillMaxHeight(0.2f)
+                        .offset { IntOffset(0, (scrollProgress * 300).toInt()) }
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
+                )
+            }
+        }
+    }
 }
 
 @Composable
