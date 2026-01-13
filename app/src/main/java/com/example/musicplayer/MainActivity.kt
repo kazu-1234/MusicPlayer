@@ -99,9 +99,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.1.8: 再生キュードラッグ時のアニメーション追加
-private const val APP_VERSION = "v2.1.8"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v38"
+// v2.1.9: メタデータ文字化け判定強化（C1制御文字対応）
+private const val APP_VERSION = "v2.1.9"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v39"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -2340,9 +2340,22 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
     // 文字化け検出関数
     fun isGarbled(s: String?): Boolean {
         if (s == null) return false
-        // U+FFFDまたは制御文字
-        if (s.contains('\uFFFD') || s.any { it.code < 32 && it != '\t' && it != '\n' && it != '\r' }) return true
-        // Shift-JIS→UTF-8誤変換の典型パターン
+        
+        // 1. U+FFFD (置換文字) を含む場合は確実に文字化け
+        if (s.contains('\uFFFD')) return true
+        
+        // 2. 制御文字 (C0: 00-1F, DEL: 7F, C1: 80-9F) を含む場合は文字化けとみなす
+        // Shift-JISの2バイト文字がLatin-1として解釈されると、0x80-0x9Fの範囲(C1制御文字)になることが多い
+        // 例: '～' (0x8160) -> \u0081 (C1) + ` (Backtick)
+        // ただし、タブ(\t), 改行(\n, \r)は許可する
+        if (s.any { 
+            val c = it.code
+            (c < 32 && c != 9 && c != 10 && c != 13) || // C0 control (excluding tab, LF, CR)
+            (c == 0x7F) ||                              // DEL
+            (c in 0x80..0x9F)                           // C1 control (Shift-JIS corruption often lands here)
+        }) return true
+        
+        // 3. Shift-JIS→UTF-8誤変換の典型パターン (20%以上が特定のLatin-1文字)
         val mojibakeChars = listOf('ã', 'å', 'æ', 'ç', 'è', 'é', 'ê', 'ë', 'ì', 'í', 'î', 'ï')
         val mojibakeCount = s.count { mojibakeChars.contains(it) }
         return s.length > 0 && mojibakeCount.toFloat() / s.length.toFloat() > 0.2f
