@@ -83,6 +83,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import android.app.NotificationChannel
@@ -1069,15 +1070,14 @@ fun FullScreenPlayer(
             title = { Text("再生キュー (${playingQueue.size}曲)") },
             text = {
                 Box(modifier = Modifier.heightIn(max = 400.dp)) {
+                    // 行高さ（padding 8+8=16dp + コンテンツ高さ〜40dp? → 合計56dp）
+                    val density = LocalDensity.current
+                    val itemHeightPx = with(density) { 56.dp.toPx() }.toInt()
+                    
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        // 行高さ（padding 8+8=16dp + コンテンツ高さ〜40dp? → 合計56dp）
-                        // itemsの外で計算
-                        val density = LocalDensity.current
-                        val itemHeightPx = with(density) { 56.dp.toPx() }.toInt()
-                        
                         items(playingQueue.size, key = { playingQueue[it].uri.toString() }) { index ->
                             val song = playingQueue[index]
                             val isCurrent = song.uri == currentSong.uri
