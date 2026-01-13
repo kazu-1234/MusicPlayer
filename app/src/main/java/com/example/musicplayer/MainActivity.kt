@@ -1514,8 +1514,8 @@ fun SettingsScreen(
                 }
 
                 if (isScanning) {
-                    LinearProgressIndicator(progress = { scanProgress })
-                    Text("読み込み中... ${(scanProgress * 100).toInt()}% (${scanCount}曲)")
+                    LinearProgressIndicator(progress = { if (scanProgress > 0 && scanProgress <= 1f) scanProgress else 0.5f })
+                    Text("読み込み中... ${scanCount}曲")
                 }
                 HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
             }
@@ -2467,21 +2467,37 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
                                 var songAlbum = "Unknown Album"
                                 var trackNumber = 0
                                 
-                                // メタデータ取得は実機でハングするためスキップ
-                                // ファイル名をタイトルとして使用
-                                /*
+                                // メタデータ取得（各ファイルで新しいretrieverを使用）
                                 try {
                                     val fileUri = DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId)
-                                    retriever.setDataSource(context, fileUri)
-                                    songTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE) ?: songTitle
-                                    songArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST) ?: "Unknown Artist"
-                                    songAlbum = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM) ?: "Unknown Album"
-                                    val trackString = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
-                                    trackNumber = trackString?.substringBefore("/")?.toIntOrNull() ?: 0
+                                    val localRetriever = MediaMetadataRetriever()
+                                    try {
+                                        localRetriever.setDataSource(context, fileUri)
+                                        val extractedTitle = localRetriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+                                        val extractedArtist = localRetriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+                                        val extractedAlbum = localRetriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
+                                        
+                                        // 文字化け検出
+                                        fun isGarbled(s: String?): Boolean {
+                                            if (s == null) return false
+                                            if (s.contains('\uFFFD') || s.any { it.code < 32 && it != '\t' && it != '\n' && it != '\r' }) return true
+                                            val mojibakeChars = listOf('ã', 'å', 'æ', 'ç', 'è', 'é', 'ê', 'ë', 'ì', 'í', 'î', 'ï')
+                                            val mojibakeCount = s.count { mojibakeChars.contains(it) }
+                                            return s.length > 0 && mojibakeCount.toFloat() / s.length.toFloat() > 0.2f
+                                        }
+                                        
+                                        songTitle = if (isGarbled(extractedTitle)) songTitle else (extractedTitle ?: songTitle)
+                                        songArtist = if (isGarbled(extractedArtist)) "Unknown Artist" else (extractedArtist ?: "Unknown Artist")
+                                        songAlbum = if (isGarbled(extractedAlbum)) "Unknown Album" else (extractedAlbum ?: "Unknown Album")
+                                        
+                                        val trackString = localRetriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
+                                        trackNumber = trackString?.substringBefore("/")?.toIntOrNull() ?: 0
+                                    } finally {
+                                        try { localRetriever.release() } catch (ignored: Exception) {}
+                                    }
                                 } catch (e: Exception) {
-                                     // 無視
+                                     // メタデータ取得失敗
                                 }
-                                */
 
                                 songList.add(Song(DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId), name, songTitle, songArtist, songAlbum, 0, trackNumber, directoryUri))
                             }
