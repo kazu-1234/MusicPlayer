@@ -1058,36 +1058,31 @@ fun FullScreenPlayer(
     
     // キュー表示ダイアログ
     if (showQueue) {
+        val listState = rememberLazyListState()
         AlertDialog(
             onDismissRequest = { showQueue = false },
             title = { Text("再生キュー (${playingQueue.size}曲)") },
             text = {
-                LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
-                    items(playingQueue.size, key = { playingQueue[it].uri.toString() }) { index ->
-                        val song = playingQueue[index]
-                        val isCurrent = song.uri == currentSong.uri
-                        val isDragging = draggedIndex == index
-                        
-                        // ドラッグ中のオフセット計算（シンプル化）
-                        val itemHeight = 56
-                        
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .offset { 
-                                    val yOffset = if (isDragging) {
-                                        dragOffset.toInt()
-                                    } else if (draggedIndex != null) {
-                                        val draggedPos = draggedIndex!!
-                                        val moveBy = (dragOffset / itemHeight).toInt()
-                                        val targetPos = draggedPos + moveBy
-                                        when {
-                                            draggedPos > index && targetPos <= index -> itemHeight
-                                            draggedPos < index && targetPos >= index -> -itemHeight
-                                            else -> 0
-                                        }
-                                    } else 0
-                                    IntOffset(0, yOffset) 
+                Box(modifier = Modifier.heightIn(max = 400.dp)) {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        items(playingQueue.size, key = { playingQueue[it].uri.toString() }) { index ->
+                            val song = playingQueue[index]
+                            val isCurrent = song.uri == currentSong.uri
+                            val isDragging = draggedIndex == index
+                            
+                            // ドラッグ中のオフセット計算（簡素化）
+                            val itemHeight = 64
+                            
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .offset {
+                                        // ドラッグ中のアイテムのみオフセット
+                                        val yOffset = if (isDragging) dragOffset.toInt() else 0
+                                        IntOffset(0, yOffset) 
                                 }
                                 .background(
                                     when {
@@ -1164,6 +1159,7 @@ fun FullScreenPlayer(
                         if (index < playingQueue.size - 1) {
                             HorizontalDivider()
                         }
+                    }
                     }
                 }
             },
