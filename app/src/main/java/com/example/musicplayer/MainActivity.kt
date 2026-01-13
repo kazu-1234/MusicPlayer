@@ -1494,8 +1494,14 @@ fun SettingsScreen(
                                 val count = countFilesInDirectory(context, uri)
                                 val newSongs = getAudioFilesFromDirectory(context, uri, count) { progress ->
                                      launch(Dispatchers.Main) { 
-                                         scanProgress = progress
-                                         scanCount = (progress * count).toInt()
+                                         if (progress < 0) {
+                                             // 負の値は曲数としてエンコードされている
+                                             scanCount = (-progress).toInt()
+                                             scanProgress = 0.5f // 動作中を示す
+                                         } else {
+                                             scanProgress = progress
+                                             scanCount = (progress * count).toInt()
+                                         }
                                      }
                                 }
                                 val combined = (cleanLibrary + newSongs).distinctBy { it.uri }
@@ -2451,27 +2457,20 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
                             if (mimeType.startsWith("audio/") || mimeType == "application/ogg" || 
                                 setOf("mp3", "m4a", "flac", "wav", "aac", "ogg").contains(ext)) {
                                 processedCount++
-                                if (processedCount % 5 == 0) { // 更新頻度
-                                    // totalCountが0の場合は適当な進捗を送るが、呼び出し側で件数表示に切り替えるため、ここではprocessedCountを負の値として送るハックもありだが
-                                    // onProgressはFloatのみ。
-                                    // 呼び出し元が totalFiles == 0 の場合、progress は無視して processedCount を表示するロジックに変更するのが望ましいが
-                                    // ここでは単純に 0.5 (50%) などを送って「動いている」ことだけ示す、あるいは 1.0 未満で推移させる
-                                    onProgress(0.1f) // 不定状態
-                                }
+                                // 毎曲進捗更新（曲数を負の値としてエンコード）
+                                onProgress(-processedCount.toFloat())
                                 
                                 // v2.0.8: メタデータ取得復活（低速モードでも情報重視）
+                                // ★注意: 実機でハングするためメタデータ取得を無効化
                                 var songTitle = name.substringBeforeLast('.')
                                 var songArtist = "Unknown Artist"
                                 var songAlbum = "Unknown Album"
                                 var trackNumber = 0
                                 
+                                // メタデータ取得は実機でハングするためスキップ
+                                // ファイル名をタイトルとして使用
+                                /*
                                 try {
-                                    /* SAFでのメタデータ取得は非常に遅いが要望により実装検討
-                                       ただしDocumentFileからのパス取得は困難なため、ここではファイル名ベースを維持しつつ、
-                                       後で可能なら改善するが、ひとまずタイトル等はファイル名から。
-                                       ★実機で遅すぎる場合はここがボトルネックになる。
-                                       -> MediaMetadataRetriever は Uri を受け取れる。
-                                    */
                                     val fileUri = DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId)
                                     retriever.setDataSource(context, fileUri)
                                     songTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE) ?: songTitle
@@ -2482,6 +2481,7 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
                                 } catch (e: Exception) {
                                      // 無視
                                 }
+                                */
 
                                 songList.add(Song(DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId), name, songTitle, songArtist, songAlbum, 0, trackNumber, directoryUri))
                             }
