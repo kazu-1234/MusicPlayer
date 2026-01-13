@@ -274,10 +274,15 @@ class MusicScanService : Service() {
                                         val extractedArtist = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
                                         val extractedAlbum = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
                                         
-                                        // 文字化け検出: 置換文字(U+FFFD)や制御文字が含まれていればファイル名を使用
+                                        // 文字化け検出: U+FFFD、制御文字、Shift-JIS誤変換パターンをチェック
                                         fun isGarbled(s: String?): Boolean {
                                             if (s == null) return false
-                                            return s.contains('\uFFFD') || s.any { it.code < 32 && it != '\t' && it != '\n' && it != '\r' }
+                                            // U+FFFDまたは制御文字
+                                            if (s.contains('\uFFFD') || s.any { it.code < 32 && it != '\t' && it != '\n' && it != '\r' }) return true
+                                            // Shift-JIS→UTF-8誤変換の典型パターン
+                                            val mojibakeChars = listOf('ã', 'å', 'æ', 'ç', 'è', 'é', 'ê', 'ë', 'ì', 'í', 'î', 'ï')
+                                            val mojibakeCount = s.count { mojibakeChars.contains(it) }
+                                            return s.length > 0 && mojibakeCount.toFloat() / s.length.toFloat() > 0.2f
                                         }
                                         
                                         songTitle = if (isGarbled(extractedTitle)) title else (extractedTitle ?: title)

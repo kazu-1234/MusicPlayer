@@ -94,9 +94,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.1.1: 設定UI改善、並列スキャン修正
-private const val APP_VERSION = "v2.1.1"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-13 v31"
+// v2.1.2: 文字化け検出強化
+private const val APP_VERSION = "v2.1.2"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-13 v32"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -2385,10 +2385,16 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
                             val extractedArtist = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
                             val extractedAlbum = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
                             
-                            // 文字化け検出
+                            // 文字化け検出: U+FFFD、制御文字、Shift-JIS誤変換パターンをチェック
                             fun isGarbled(s: String?): Boolean {
                                 if (s == null) return false
-                                return s.contains('\uFFFD') || s.any { it.code < 32 && it != '\t' && it != '\n' && it != '\r' }
+                                // U+FFFDまたは制御文字
+                                if (s.contains('\uFFFD') || s.any { it.code < 32 && it != '\t' && it != '\n' && it != '\r' }) return true
+                                // Shift-JIS→UTF-8誤変換の典型パターン（ã,å,æ,ç,è,é の連続）
+                                val mojibakeChars = listOf('ã', 'å', 'æ', 'ç', 'è', 'é', 'ê', 'ë', 'ì', 'í', 'î', 'ï')
+                                val mojibakeCount = s.count { mojibakeChars.contains(it) }
+                                // 文字列の20%以上がmojibake文字なら文字化けと判定
+                                return s.length > 0 && mojibakeCount.toFloat() / s.length.toFloat() > 0.2f
                             }
                             
                             songTitle = if (isGarbled(extractedTitle)) title else (extractedTitle ?: title)
