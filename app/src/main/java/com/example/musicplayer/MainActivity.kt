@@ -2280,36 +2280,51 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
             val total = allFiles.size 
             
             if (total > 0) {
-                 allFiles.forEach { file ->
-                    processedCount++
-                    // 毎曲ごとにUI更新
-                    onProgress(processedCount.toFloat() / total.toFloat())
-                    
-                    try {
-                        val filePath = file.absolutePath
-                        val title = file.nameWithoutExtension
-                        
-                        var songTitle = title
-                        var songArtist = "Unknown Artist"
-                        var songAlbum = "Unknown Album"
-                        var trackNumber = 0
+                // 並列処理: 全ファイルを50並列で処理
+                val semaphore = kotlinx.coroutines.sync.Semaphore(50)
+                val processedLocal = java.util.concurrent.atomic.AtomicInteger(0)
+                
+                val results = coroutineScope {
+                    allFiles.map { file ->
+                        async {
+                            semaphore.acquire()
+                            try {
+                                val currentCount = processedLocal.incrementAndGet()
+                                val progress = currentCount.toFloat() / total.toFloat()
+                                onProgress(progress)
+                                
+                                val retrieverLocal = MediaMetadataRetriever()
+                                val filePath = file.absolutePath
+                                val title = file.nameWithoutExtension
+                                
+                                var songTitle = title
+                                var songArtist = "Unknown Artist"
+                                var songAlbum = "Unknown Album"
+                                var trackNumber = 0
 
-                        // v2.0.8: メタデータ取得復活（ユーザー要望）
-                        try {
-                            retriever.setDataSource(filePath)
-                            songTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE) ?: title
-                            songArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST) ?: "Unknown Artist"
-                            songAlbum = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM) ?: "Unknown Album"
-                            val trackString = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
-                            trackNumber = trackString?.substringBefore("/")?.toIntOrNull() ?: 0
-                        } catch (e: Exception) {
-                            // メタデータ取得失敗時はデフォルト値
+                                try {
+                                    retrieverLocal.setDataSource(filePath)
+                                    songTitle = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE) ?: title
+                                    songArtist = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST) ?: "Unknown Artist"
+                                    songAlbum = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM) ?: "Unknown Album"
+                                    val trackString = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
+                                    trackNumber = trackString?.substringBefore("/")?.toIntOrNull() ?: 0
+                                    retrieverLocal.release()
+                                } catch (e: Exception) {
+                                    try { retrieverLocal.release() } catch (ignored: Exception) {}
+                                }
+
+                                Song(Uri.fromFile(file), file.name, songTitle, songArtist, songAlbum, 0, trackNumber, directoryUri)
+                            } catch (e: Exception) { 
+                                e.printStackTrace()
+                                null 
+                            } finally {
+                                semaphore.release()
+                            }
                         }
-
-                        songList.add(Song(Uri.fromFile(file), file.name, songTitle, songArtist, songAlbum, 0, trackNumber, directoryUri))
-                        
-                    } catch (e: Exception) { e.printStackTrace() }
+                    }.awaitAll()
                 }
+                songList.addAll(results.filterNotNull())
             } else {
                  useFileApi = false // 0件の場合はフォールバック
             }
