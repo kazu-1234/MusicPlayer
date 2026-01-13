@@ -270,9 +270,20 @@ class MusicScanService : Service() {
 
                                     try {
                                         retrieverLocal.setDataSource(filePath)
-                                        songTitle = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE) ?: title
-                                        songArtist = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST) ?: "Unknown Artist"
-                                        songAlbum = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM) ?: "Unknown Album"
+                                        val extractedTitle = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+                                        val extractedArtist = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+                                        val extractedAlbum = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
+                                        
+                                        // 文字化け検出: 置換文字(U+FFFD)や制御文字が含まれていればファイル名を使用
+                                        fun isGarbled(s: String?): Boolean {
+                                            if (s == null) return false
+                                            return s.contains('\uFFFD') || s.any { it.code < 32 && it != '\t' && it != '\n' && it != '\r' }
+                                        }
+                                        
+                                        songTitle = if (isGarbled(extractedTitle)) title else (extractedTitle ?: title)
+                                        songArtist = if (isGarbled(extractedArtist)) "Unknown Artist" else (extractedArtist ?: "Unknown Artist")
+                                        songAlbum = if (isGarbled(extractedAlbum)) "Unknown Album" else (extractedAlbum ?: "Unknown Album")
+                                        
                                         val trackString = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
                                         trackNumber = trackString?.substringBefore("/")?.toIntOrNull() ?: 0
                                         retrieverLocal.release()
