@@ -1514,7 +1514,7 @@ fun SettingsScreen(
                 }
 
                 if (isScanning) {
-                    LinearProgressIndicator(progress = { if (scanProgress > 0 && scanProgress <= 1f) scanProgress else 0.5f })
+                    LinearProgressIndicator() // 不定（アニメーション）
                     Text("読み込み中... ${scanCount}曲")
                 }
                 HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
@@ -2468,6 +2468,8 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
                                 var trackNumber = 0
                                 
                                 // メタデータ取得（各ファイルで新しいretrieverを使用）
+                                // ★高速化リクエストによりスキップ（ファイル名を使用）
+                                /*
                                 try {
                                     val fileUri = DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId)
                                     val localRetriever = MediaMetadataRetriever()
@@ -2498,6 +2500,7 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
                                 } catch (e: Exception) {
                                      // メタデータ取得失敗
                                 }
+                                */
 
                                 songList.add(Song(DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId), name, songTitle, songArtist, songAlbum, 0, trackNumber, directoryUri))
                             }
