@@ -94,9 +94,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.2.0: ファイルエクスプローラーモード（高速スキャン）
-private const val APP_VERSION = "v2.2.0"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-13 v33"
+// v2.1.2: 文字化け検出強化
+private const val APP_VERSION = "v2.1.2"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-13 v32"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -2321,90 +2321,8 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
     val retriever = MediaMetadataRetriever()
     var processedCount = 0
 
-    // 高速化: Uriから実際のファイルパスを推測してjava.io.Fileを使用する
-    var useFileApi = false
-    var rootFile: File? = null
 
-    try {
-        if (DocumentsContract.isTreeUri(directoryUri)) {
-            val docId = DocumentsContract.getTreeDocumentId(directoryUri)
-            val split = docId.split(":")
-            if (split.size >= 2) {
-                val type = split[0]
-                val pathStr = split[1]
-                
-                val targetPath = if (type == "primary") {
-                    "/storage/emulated/0/$pathStr"
-                } else {
-                    "/storage/$type/$pathStr"
-                }
-                
-                val file = File(targetPath)
-                if (file.exists() && file.isDirectory && file.canRead()) {
-                    rootFile = file
-                    useFileApi = true
-                }
-            }
-        }
-    } catch (e: Exception) {
-        e.printStackTrace()
-    }
-
-    if (useFileApi && rootFile != null) {
-        // java.io.File APIを使用した高速スキャン
-        try {
-            val allFiles = rootFile!!.walk()
-                .filter { it.isFile && (it.extension.equals("mp3", true) || it.extension.equals("m4a", true) || it.extension.equals("flac", true) || it.extension.equals("wav", true) || it.extension.equals("aac", true) || it.extension.equals("ogg", true)) }
-                .toList()
-            
-            
-            // val total = allFiles.size // 以前の総数を使用（walk().toList()しているので正確）
-            val total = allFiles.size 
-            
-            if (total > 0) {
-                // ファイルエクスプローラーモード: フォルダ構造からメタデータを取得（高速）
-                var processedCount = 0
-                
-                allFiles.forEach { file ->
-                    processedCount++
-                    onProgress(processedCount.toFloat() / total.toFloat())
-                    
-                    // ファイル名から曲タイトルを取得
-                    val songTitle = file.nameWithoutExtension
-                    
-                    // フォルダ構造: [音楽フォルダ]/アーティスト/アルバム/曲.flac
-                    val parentFile = file.parentFile  // アルバムフォルダ
-                    val grandParentFile = parentFile?.parentFile  // アーティストフォルダ
-                    
-                    val songAlbum = parentFile?.name ?: "Unknown Album"
-                    val songArtist = grandParentFile?.name ?: "Unknown Artist"
-                    
-                    // トラック番号: ファイル名の先頭数字から取得（例: "01. 曲名" → 1）
-                    val trackNumber = songTitle.takeWhile { it.isDigit() }.toIntOrNull() ?: 0
-
-                    songList.add(Song(
-                        uri = Uri.fromFile(file),
-                        displayName = file.name,
-                        title = songTitle,
-                        artist = songArtist,
-                        album = songAlbum,
-                        playCount = 0,
-                        trackNumber = trackNumber,
-                        sourceFolderUri = directoryUri
-                    ))
-                }
-            } else {
-                 useFileApi = false // 0件の場合はフォールバック
-            }
-
-        } catch (e: Exception) {
-            e.printStackTrace()
-            // 失敗時はDocumentFileロジックへ（下記）
-            useFileApi = false
-        }
-    }
-
-    if (!useFileApi) {
+    // SAFベースのスキャン（安定性優先、実機対応）
         // 従来のDocumentFileを使用したスキャン（低速だが確実）
         // v2.0.8: totalFilesが0（スキップされた）場合、プログレスは推定値や件数ベースにする必要があるが、
         // 簡易実装として 0.1f ずつ増やすなどの対応、あるいは「読み込み中... N曲」表示にする（呼び出し元で対応）
@@ -2454,9 +2372,24 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
                                     */
                                     val fileUri = DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId)
                                     retriever.setDataSource(context, fileUri)
-                                    songTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE) ?: songTitle
-                                    songArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST) ?: "Unknown Artist"
-                                    songAlbum = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM) ?: "Unknown Album"
+                                    
+                                    val extractedTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+                                    val extractedArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+                                    val extractedAlbum = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
+                                    
+                                    // 文字化け検出: mojibakeパターン（ã,å,æ等）を含む場合はファイル名を使用
+                                    fun isGarbled(s: String?): Boolean {
+                                        if (s == null) return false
+                                        if (s.contains('\uFFFD') || s.any { it.code < 32 && it != '\t' && it != '\n' && it != '\r' }) return true
+                                        val mojibakeChars = listOf('ã', 'å', 'æ', 'ç', 'è', 'é', 'ê', 'ë', 'ì', 'í', 'î', 'ï')
+                                        val mojibakeCount = s.count { mojibakeChars.contains(it) }
+                                        return s.length > 0 && mojibakeCount.toFloat() / s.length.toFloat() > 0.2f
+                                    }
+                                    
+                                    songTitle = if (isGarbled(extractedTitle)) songTitle else (extractedTitle ?: songTitle)
+                                    songArtist = if (isGarbled(extractedArtist)) "Unknown Artist" else (extractedArtist ?: "Unknown Artist")
+                                    songAlbum = if (isGarbled(extractedAlbum)) "Unknown Album" else (extractedAlbum ?: "Unknown Album")
+                                    
                                     val trackString = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
                                     trackNumber = trackString?.substringBefore("/")?.toIntOrNull() ?: 0
                                 } catch (e: Exception) {
