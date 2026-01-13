@@ -90,9 +90,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.1.1: 設定UIリファクタ（バージョン+アップデート統合）、並列スキャン修正
-private const val APP_VERSION = "v2.1.1"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-13 v31"
+// v2.1.0: スキャン進捗表示改善、キューUI改善（ドラッグ並び替えアニメーション）
+private const val APP_VERSION = "v2.1.0"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-13 v30"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
