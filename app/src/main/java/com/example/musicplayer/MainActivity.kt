@@ -94,9 +94,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.1.2: 文字化け検出強化
-private const val APP_VERSION = "v2.1.2"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-13 v32"
+// v2.1.3: キュードラッグ修正、スキャン進捗表示改善
+private const val APP_VERSION = "v2.1.3"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v33"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
