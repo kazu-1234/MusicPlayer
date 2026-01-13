@@ -2578,51 +2578,62 @@ fun VerticalScrollbar(
     listState: LazyListState,
     thumbColor: Color = MaterialTheme.colorScheme.primary,
     thumbWidth: Dp = 8.dp,
-    minThumbHeight: Dp = 32.dp
+    minThumbHeight: Dp = 48.dp
 ) {
     val coroutineScope = rememberCoroutineScope()
     
-    // LayoutInfoを取得（再コンポーズのトリガーとして重要）
     val layoutInfo = listState.layoutInfo
     val totalItemsCount = layoutInfo.totalItemsCount
     val visibleItemsInfo = layoutInfo.visibleItemsInfo
     
-    if (totalItemsCount == 0 || visibleItemsInfo.isEmpty()) return
+    // アイテムがない、または全て画面内に収まっている場合は表示しない
+    if (totalItemsCount == 0 || visibleItemsInfo.isEmpty() || visibleItemsInfo.size >= totalItemsCount) return
     
-    BoxWithConstraints(modifier = modifier) {
+    BoxWithConstraints(
+        modifier = modifier
+            .width(thumbWidth * 4) // タッチ領域を広げる（見た目はthumbWidthだが、見えない判定領域を持つ）
+            .pointerInput(totalItemsCount, maxHeight) {
+                detectVerticalDragGestures(
+                    onDragStart = { offset ->
+                        // タップ/ドラッグ開始位置へジャンプ
+                        val scrollProgress = (offset.y / size.height.toFloat()).coerceIn(0f, 1f)
+                        val targetIndex = (scrollProgress * totalItemsCount).toInt()
+                        coroutineScope.launch {
+                            listState.scrollToItem(targetIndex)
+                        }
+                    },
+                    onDrag = { change, _ ->
+                        change.consume()
+                        // ドラッグ中の位置へ追従
+                        val scrollProgress = (change.position.y / size.height.toFloat()).coerceIn(0f, 1f)
+                        val targetIndex = (scrollProgress * totalItemsCount).toInt()
+                        coroutineScope.launch {
+                            listState.scrollToItem(targetIndex)
+                        }
+                    }
+                )
+            }
+    ) {
         val barHeight = maxHeight
-        val thumbHeight = (barHeight * (visibleItemsInfo.size.toFloat() / totalItemsCount.toFloat())).coerceAtLeast(minThumbHeight)
+        val scrollWindowSize = visibleItemsInfo.size.toFloat() / totalItemsCount.toFloat()
+        
+        val thumbHeight = (barHeight * scrollWindowSize).coerceAtLeast(minThumbHeight)
         val scrollableHeight = barHeight - thumbHeight
         
-        // スクロール位置計算
-        // firstVisibleItemIndex はスクロールの上端にあるアイテムのインデックス
         val firstVisibleItemIndex = listState.firstVisibleItemIndex
-        
         val maxScrollIndex = (totalItemsCount - visibleItemsInfo.size).coerceAtLeast(1)
         val scrollProgress = (firstVisibleItemIndex.toFloat() / maxScrollIndex.toFloat()).coerceIn(0f, 1f)
         
         val thumbOffset = scrollableHeight * scrollProgress
         
+        // 実際のバー（右端に寄せる）
         Box(
             modifier = Modifier
+                .align(Alignment.CenterEnd)
                 .width(thumbWidth)
                 .height(thumbHeight)
                 .offset(y = thumbOffset)
-                .background(thumbColor, RoundedCornerShape(thumbWidth / 2))
-                .pointerInput(totalItemsCount, scrollableHeight) {
-                     detectVerticalDragGestures { change, dragAmount ->
-                         change.consume()
-                         val dragPercentage = dragAmount / scrollableHeight.toPx()
-                         val scrollItemAmount = dragPercentage * totalItemsCount
-                         
-                         val currentTarget = listState.firstVisibleItemIndex + scrollItemAmount
-                         val targetIndex = currentTarget.toInt().coerceIn(0, totalItemsCount - 1)
-                         
-                         coroutineScope.launch {
-                             listState.scrollToItem(targetIndex)
-                         }
-                     }
-                }
+                .background(thumbColor.copy(alpha = 0.6f), RoundedCornerShape(thumbWidth / 2))
         )
     }
 }
