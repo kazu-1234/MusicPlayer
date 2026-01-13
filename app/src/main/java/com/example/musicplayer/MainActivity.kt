@@ -1937,19 +1937,21 @@ fun FolderList(
         }
         HorizontalDivider()
         val listState = rememberLazyListState()
-        LazyColumn(state = listState) {
-            items(sortedItems) { item ->
-                Column(modifier = Modifier.clickable { onItemClick(item) }) {
-                    // "Unknown" のような項目は「不明」と表示
-                    Text(item.ifBlank { "不明" }, Modifier.fillMaxWidth().padding(16.dp))
-                    HorizontalDivider()
+        Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                items(sortedItems) { item ->
+                    Column(modifier = Modifier.clickable { onItemClick(item) }) {
+                        // "Unknown" のような項目は「不明」と表示
+                        Text(item.ifBlank { "不明" }, Modifier.fillMaxWidth().padding(16.dp))
+                        HorizontalDivider()
+                    }
                 }
             }
+            VerticalScrollbar(
+                modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+                listState = listState
+            )
         }
-        VerticalScrollbar(
-            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
-            listState = listState
-        )
     }
 }
 
