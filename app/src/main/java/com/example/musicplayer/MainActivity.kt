@@ -102,9 +102,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.1.11: 高速スクロールバー追加（全リスト対応）
-private const val APP_VERSION = "v2.1.11"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v41"
+// v2.1.12: スクロールバー操作性改善＆文字化け対策強化
+private const val APP_VERSION = "v2.1.12"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v45"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -2352,10 +2352,14 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
             (c in 0x80..0x9F)                           // C1 control (Shift-JIS corruption often lands here)
         }) return true
         
-        // 3. Shift-JIS→UTF-8誤変換の典型パターン (20%以上が特定のLatin-1文字)
-        val mojibakeChars = listOf('ã', 'å', 'æ', 'ç', 'è', 'é', 'ê', 'ë', 'ì', 'í', 'î', 'ï')
-        val mojibakeCount = s.count { mojibakeChars.contains(it) }
-        return s.length > 0 && mojibakeCount.toFloat() / s.length.toFloat() > 0.2f
+        // 3. Win-1252文字化け判定: 
+        // 頻出する文字化け記号が含まれており、かつ日本語が含まれていない場合は文字化けとみなす
+        val japaneseChars = s.any { it.code in 0x3040..0x30FF || it.code in 0x4E00..0x9FFF } // ひらがな・カタカナ・漢字
+        if (japaneseChars) return false
+
+        val mojibakeChars = "‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ¡¢£¤¥¦§¨©ª«¬®¯°±²³´µ¶·¸¹º»¼½¾¿ÃÅÆÇÈÉÊËÌÍÎÏ"
+        val mojibakeCount = s.count { it in mojibakeChars }
+        return s.length > 0 && mojibakeCount.toFloat() / s.length.toFloat() > 0.3f
     }
 
     // 再帰的にディレクトリを探索する関数
@@ -2609,25 +2613,38 @@ fun VerticalScrollbar(
             modifier = Modifier
                 .fillMaxSize()
                 .pointerInput(totalItemsCount, barHeight) {
-                    detectVerticalDragGestures(
-                        onDragStart = { offset ->
-                            // タップ/ドラッグ開始位置へジャンプ
-                            val progress = (offset.y / size.height.toFloat()).coerceIn(0f, 1f)
-                            val targetIndex = (progress * totalItemsCount).toInt()
-                            coroutineScope.launch {
-                                listState.scrollToItem(targetIndex)
-                            }
-                        },
-                        onVerticalDrag = { change, _ ->
-                            change.consume()
-                            // ドラッグ中の位置へ追従
-                            val progress = (change.position.y / size.height.toFloat()).coerceIn(0f, 1f)
+                detectVerticalDragGestures(
+                    onDragStart = { offset ->
+                        // タップ/ドラッグ開始位置へジャンプ
+                        // 指の位置がバー（つまみ）の中心に来るように計算
+                        val barHeightPx = size.height.toFloat()
+                        val thumbHeightPx = thumbHeight.toPx()
+                        val scrollableHeightPx = barHeightPx - thumbHeightPx
+                        
+                        if (scrollableHeightPx > 0) {
+                            val progress = ((offset.y - thumbHeightPx / 2) / scrollableHeightPx).coerceIn(0f, 1f)
                             val targetIndex = (progress * totalItemsCount).toInt()
                             coroutineScope.launch {
                                 listState.scrollToItem(targetIndex)
                             }
                         }
-                    )
+                    },
+                    onVerticalDrag = { change, _ ->
+                        change.consume()
+                        // ドラッグ中の位置へ追従
+                        val barHeightPx = size.height.toFloat()
+                        val thumbHeightPx = thumbHeight.toPx()
+                        val scrollableHeightPx = barHeightPx - thumbHeightPx
+                        
+                        if (scrollableHeightPx > 0) {
+                            val progress = ((change.position.y - thumbHeightPx / 2) / scrollableHeightPx).coerceIn(0f, 1f)
+                            val targetIndex = (progress * totalItemsCount).toInt()
+                            coroutineScope.launch {
+                                listState.scrollToItem(targetIndex)
+                            }
+                        }
+                    }
+                )
                 }
         ) {
             // 実際のバー（右端に表示）
