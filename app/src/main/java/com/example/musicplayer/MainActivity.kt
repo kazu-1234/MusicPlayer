@@ -1494,14 +1494,8 @@ fun SettingsScreen(
                                 val count = countFilesInDirectory(context, uri)
                                 val newSongs = getAudioFilesFromDirectory(context, uri, count) { progress ->
                                      launch(Dispatchers.Main) { 
-                                         if (progress < 0) {
-                                             // 負の値は曲数としてエンコードされている
-                                             scanCount = (-progress).toInt()
-                                             scanProgress = 0.5f // 動作中を示す
-                                         } else {
-                                             scanProgress = progress
-                                             scanCount = (progress * count).toInt()
-                                         }
+                                         scanProgress = progress
+                                         scanCount = (progress * count).toInt()
                                      }
                                 }
                                 val combined = (cleanLibrary + newSongs).distinctBy { it.uri }
@@ -1514,8 +1508,8 @@ fun SettingsScreen(
                 }
 
                 if (isScanning) {
-                    LinearProgressIndicator() // 不定進捗（アニメーション）
-                    Text("読み込み中... ${scanCount}曲")
+                    LinearProgressIndicator(progress = { scanProgress })
+                    Text("読み込み中... ${(scanProgress * 100).toInt()}% (${scanCount}曲)")
                 }
                 HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
             }
@@ -2318,9 +2312,37 @@ private suspend fun countFilesInDirectory(context: Context, directoryUri: Uri): 
         }
     }
 
-    // v2.0.8: SAFが必要な場合、ここでの低速カウントは時間がかかるためスキップする (return 0)
-    // 実際のカウントと読み込みは getAudioFilesFromDirectory でまとめて行う
-    return@withContext 0 
+    // SAFでのファイルカウント
+    val contentResolver = context.contentResolver
+    val documentsTree = DocumentsContract.buildDocumentUriUsingTree(directoryUri, DocumentsContract.getTreeDocumentId(directoryUri))
+    
+    fun countInDirectory(currentUri: Uri): Int {
+        var localCount = 0
+        try {
+            val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(directoryUri, DocumentsContract.getDocumentId(currentUri))
+            contentResolver.query(childrenUri, null, null, null, null)?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    val docId = cursor.getString(cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID))
+                    val mimeType = cursor.getString(cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE))
+                    
+                    if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
+                        localCount += countInDirectory(DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId))
+                    } else {
+                        val name = cursor.getString(cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)) ?: ""
+                        val ext = name.substringAfterLast('.', "").lowercase()
+                        if (mimeType.startsWith("audio/") || mimeType == "application/ogg" || 
+                            setOf("mp3", "m4a", "flac", "wav", "aac", "ogg").contains(ext)) {
+                            localCount++
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) { /* 無視 */ }
+        return localCount
+    }
+    
+    count = countInDirectory(documentsTree)
+    return@withContext count
 }
 private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: Uri, totalFiles: Int, onProgress: (Float) -> Unit): List<Song> = withContext(Dispatchers.IO) {
     val songList = mutableListOf<Song>()
@@ -2457,8 +2479,9 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
                             if (mimeType.startsWith("audio/") || mimeType == "application/ogg" || 
                                 setOf("mp3", "m4a", "flac", "wav", "aac", "ogg").contains(ext)) {
                                 processedCount++
-                                // 毎曲進捗更新（曲数を負の値としてエンコード）
-                                onProgress(-processedCount.toFloat())
+                                // 進捗更新（パーセンテージ）
+                                val progress = if (totalFiles > 0) processedCount.toFloat() / totalFiles.toFloat() else 0f
+                                onProgress(progress)
                                 
                                 // v2.0.8: メタデータ取得復活（低速モードでも情報重視）
                                 // ★注意: 実機でハングするためメタデータ取得を無効化
