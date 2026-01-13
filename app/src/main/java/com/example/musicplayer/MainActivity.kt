@@ -99,9 +99,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.1.7: 再生キュードラッグ動作改善（リアルタイム並び替え・位置飛び修正）
-private const val APP_VERSION = "v2.1.7"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v37"
+// v2.1.8: 再生キュードラッグ時のアニメーション追加
+private const val APP_VERSION = "v2.1.8"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v38"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -1034,7 +1034,7 @@ fun MiniPlayerBar(
 /**
  * フルスクリーンプレイヤー - スワイプダウンで閉じる
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun FullScreenPlayer(
     context: Context,
@@ -1089,6 +1089,7 @@ fun FullScreenPlayer(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .then(if (!isDragging) Modifier.animateItemPlacement() else Modifier)
                                     .offset { IntOffset(0, itemOffset) }
                                     .zIndex(if (isDragging) 1f else 0f) // ドラッグ中を最前面に
                                     .background(
