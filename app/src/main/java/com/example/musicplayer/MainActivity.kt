@@ -98,9 +98,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.1.6: キュードラッグ高さ調整(56dp)、コードリファクタリング(File API削除)
-private const val APP_VERSION = "v2.1.6"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v36"
+// v2.1.7: 再生キュードラッグ動作改善（リアルタイム並び替え・位置飛び修正）
+private const val APP_VERSION = "v2.1.7"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v37"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -1073,40 +1073,27 @@ fun FullScreenPlayer(
                         state = listState,
                         modifier = Modifier.fillMaxWidth()
                     ) {
+                        // 行高さ（padding 8+8=16dp + コンテンツ高さ〜40dp? → 合計56dp）
+                        // itemsの外で計算
+                        val density = LocalDensity.current
+                        val itemHeightPx = with(density) { 56.dp.toPx() }.toInt()
+                        
                         items(playingQueue.size, key = { playingQueue[it].uri.toString() }) { index ->
                             val song = playingQueue[index]
                             val isCurrent = song.uri == currentSong.uri
                             val isDragging = draggedIndex == index
                             
-                            // 行高さ（padding含む）
-                            // 修正: 70dpは大きすぎたため、正確な56dpに戻す
-                            val density = LocalDensity.current
-                            val itemHeightPx = with(density) { 56.dp.toPx() }.toInt()
-                            
-                            // アニメーション用オフセット
-                            val animatedOffset by animateIntAsState(
-                                targetValue = if (isDragging) {
-                                    dragOffset.toInt()
-                                } else if (draggedIndex != null) {
-                                    val draggedPos = draggedIndex!!
-                                    val moveBy = (dragOffset / itemHeightPx).toInt()
-                                    val targetPos = (draggedPos + moveBy).coerceIn(0, playingQueue.size - 1)
-                                    when {
-                                        draggedPos < index && targetPos >= index -> -itemHeightPx
-                                        draggedPos > index && targetPos <= index -> itemHeightPx
-                                        else -> 0
-                                    }
-                                } else 0,
-                                label = "queueItemOffset"
-                            )
+                            // ドラッグ中のアイテムのオフセット
+                            val itemOffset = if (isDragging) dragOffset.toInt() else 0
                             
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .offset { IntOffset(0, animatedOffset) }
+                                    .offset { IntOffset(0, itemOffset) }
+                                    .zIndex(if (isDragging) 1f else 0f) // ドラッグ中を最前面に
                                     .background(
                                         when {
-                                            isDragging -> MaterialTheme.colorScheme.secondaryContainer
+                                            isDragging -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.9f)
                                             isCurrent -> MaterialTheme.colorScheme.primaryContainer
                                             else -> Color.Transparent
                                         }
@@ -1114,73 +1101,79 @@ fun FullScreenPlayer(
                                     .padding(vertical = 8.dp, horizontal = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                            // 曲番号
-                            Text(
-                                "${index + 1}",
-                                modifier = Modifier.width(28.dp),
-                                style = MaterialTheme.typography.bodySmall,
-                                textAlign = TextAlign.Center
-                            )
-                            
-                            Spacer(modifier = Modifier.width(8.dp))
-                            
-                            // 曲情報
-                            Column(modifier = Modifier.weight(1f)) {
+                                // 曲番号
                                 Text(
-                                    song.title,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    song.artist,
+                                    "${index + 1}",
+                                    modifier = Modifier.width(28.dp),
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    textAlign = TextAlign.Center
+                                )
+                                
+                                Spacer(modifier = Modifier.width(8.dp))
+                                
+                                // 曲情報
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        song.title,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        song.artist,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                
+                                // ドラッグハンドル
+                                Icon(
+                                    Icons.Default.DragHandle,
+                                    contentDescription = "ドラッグ",
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .pointerInput(song.uri) {
+                                            detectDragGesturesAfterLongPress(
+                                                onDragStart = {
+                                                    draggedIndex = index
+                                                    dragOffset = 0f
+                                                },
+                                                onDragEnd = {
+                                                    draggedIndex = null
+                                                    dragOffset = 0f
+                                                },
+                                                onDragCancel = {
+                                                    draggedIndex = null
+                                                    dragOffset = 0f
+                                                },
+                                                onDrag = { change, dragAmount ->
+                                                    change.consume()
+                                                    dragOffset += dragAmount.y
+                                                    
+                                                    val moveBy = (dragOffset / itemHeightPx).toInt()
+                                                    if (moveBy != 0) {
+                                                        val currentIndex = draggedIndex ?: return@detectDragGesturesAfterLongPress
+                                                        val targetIndex = (currentIndex + moveBy).coerceIn(0, playingQueue.size - 1)
+                                                        
+                                                        if (targetIndex != currentIndex) {
+                                                            onReorder(currentIndex, targetIndex)
+                                                            draggedIndex = targetIndex
+                                                            dragOffset -= moveBy * itemHeightPx
+                                                        }
+                                                    }
+                                                }
+                                            )
+                                        },
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            
-                            // ドラッグハンドル（右側）- 長押しでドラッグ開始
-                            Icon(
-                                Icons.Default.DragHandle,
-                                contentDescription = "ドラッグ",
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .pointerInput(index) {
-                                        detectDragGesturesAfterLongPress(
-                                            onDragStart = {
-                                                draggedIndex = index
-                                                dragOffset = 0f
-                                            },
-                                            onDragEnd = {
-                                                // ドラッグ終了時の処理（px単位で計算）
-                                                val moveBy = (dragOffset / itemHeightPx).toInt()
-                                                val targetIndex = (index + moveBy).coerceIn(0, playingQueue.size - 1)
-                                                if (targetIndex != index) {
-                                                    onReorder(index, targetIndex)
-                                                }
-                                                draggedIndex = null
-                                                dragOffset = 0f
-                                            },
-                                            onDragCancel = {
-                                                draggedIndex = null
-                                                dragOffset = 0f
-                                            },
-                                            onDrag = { change, dragAmount ->
-                                                change.consume()
-                                                dragOffset += dragAmount.y
-                                            }
-                                        )
-                                    },
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            if (index < playingQueue.size - 1) {
+                                HorizontalDivider()
+                            }
                         }
-                        if (index < playingQueue.size - 1) {
-                            HorizontalDivider()
-                        }
-                    }
                     }
                 }
             },
