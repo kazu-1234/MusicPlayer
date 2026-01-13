@@ -2208,7 +2208,26 @@ private suspend fun loadPlaylistsFromFile(context: Context, allSongs: List<Song>
             val songUris = jsonObject.getJSONArray("songUris")
             val songsInPlaylist = mutableListOf<Song>()
             for (j in 0 until songUris.length()) {
-                songMap[songUris.getString(j)]?.let { songsInPlaylist.add(it) }
+                val uriString = songUris.getString(j)
+                val existingSong = songMap[uriString]
+                if (existingSong != null) {
+                    songsInPlaylist.add(existingSong)
+                } else {
+                    // 存在しないファイル: プレースホルダーSongを作成 (exists=false)
+                    val uri = Uri.parse(uriString)
+                    val fileName = uriString.substringAfterLast("/").substringAfterLast("%2F")
+                    songsInPlaylist.add(Song(
+                        uri = uri,
+                        displayName = fileName,
+                        title = fileName.substringBeforeLast("."),
+                        artist = "Unknown Artist",
+                        album = "Unknown Album",
+                        playCount = 0,
+                        trackNumber = 0,
+                        sourceFolderUri = Uri.EMPTY,
+                        exists = false
+                    ))
+                }
             }
             playlists.add(Playlist(name, songsInPlaylist))
         }
