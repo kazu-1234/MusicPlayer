@@ -2362,68 +2362,50 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
             val total = allFiles.size 
             
             if (total > 0) {
-                // 並列処理: 全ファイルを20並列で処理（実機ではリソース制限あり）
-                val semaphore = kotlinx.coroutines.sync.Semaphore(20)
-                val processedLocal = java.util.concurrent.atomic.AtomicInteger(0)
+                // 順次処理（安定性優先）
+                var processedCount = 0
                 
-                val results = coroutineScope {
-                    allFiles.map { file ->
-                        async {
-                            semaphore.acquire()
-                            try {
-                                val currentCount = processedLocal.incrementAndGet()
-                                val progress = currentCount.toFloat() / total.toFloat()
-                                onProgress(progress)
-                                
-                                val filePath = file.absolutePath
-                                val title = file.nameWithoutExtension
-                                
-                                var songTitle = title
-                                var songArtist = "Unknown Artist"
-                                var songAlbum = "Unknown Album"
-                                var trackNumber = 0
+                allFiles.forEach { file ->
+                    processedCount++
+                    onProgress(processedCount.toFloat() / total.toFloat())
+                    
+                    val filePath = file.absolutePath
+                    val title = file.nameWithoutExtension
+                    
+                    var songTitle = title
+                    var songArtist = "Unknown Artist"
+                    var songAlbum = "Unknown Album"
+                    var trackNumber = 0
 
-                                try {
-                                    // タイムアウト付きでメタデータ取得（1ファイル5秒まで）
-                                    kotlinx.coroutines.withTimeoutOrNull(5000L) {
-                                        val retrieverLocal = MediaMetadataRetriever()
-                                        try {
-                                            retrieverLocal.setDataSource(filePath)
-                                            val extractedTitle = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
-                                            val extractedArtist = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
-                                            val extractedAlbum = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
-                                            
-                                            // 文字化け検出: 置換文字(U+FFFD)や制御文字が含まれていればファイル名を使用
-                                            fun isGarbled(s: String?): Boolean {
-                                                if (s == null) return false
-                                                return s.contains('\uFFFD') || s.any { it.code < 32 && it != '\t' && it != '\n' && it != '\r' }
-                                            }
-                                            
-                                            songTitle = if (isGarbled(extractedTitle)) title else (extractedTitle ?: title)
-                                            songArtist = if (isGarbled(extractedArtist)) "Unknown Artist" else (extractedArtist ?: "Unknown Artist")
-                                            songAlbum = if (isGarbled(extractedAlbum)) "Unknown Album" else (extractedAlbum ?: "Unknown Album")
-                                            
-                                            val trackString = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
-                                            trackNumber = trackString?.substringBefore("/")?.toIntOrNull() ?: 0
-                                        } finally {
-                                            try { retrieverLocal.release() } catch (ignored: Exception) {}
-                                        }
-                                    }
-                                } catch (e: Exception) {
-                                    // メタデータ取得失敗時はデフォルト値のまま
-                                }
-
-                                Song(Uri.fromFile(file), file.name, songTitle, songArtist, songAlbum, 0, trackNumber, directoryUri)
-                            } catch (e: Exception) { 
-                                e.printStackTrace()
-                                null 
-                            } finally {
-                                semaphore.release()
+                    try {
+                        val retrieverLocal = MediaMetadataRetriever()
+                        try {
+                            retrieverLocal.setDataSource(filePath)
+                            val extractedTitle = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+                            val extractedArtist = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+                            val extractedAlbum = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
+                            
+                            // 文字化け検出
+                            fun isGarbled(s: String?): Boolean {
+                                if (s == null) return false
+                                return s.contains('\uFFFD') || s.any { it.code < 32 && it != '\t' && it != '\n' && it != '\r' }
                             }
+                            
+                            songTitle = if (isGarbled(extractedTitle)) title else (extractedTitle ?: title)
+                            songArtist = if (isGarbled(extractedArtist)) "Unknown Artist" else (extractedArtist ?: "Unknown Artist")
+                            songAlbum = if (isGarbled(extractedAlbum)) "Unknown Album" else (extractedAlbum ?: "Unknown Album")
+                            
+                            val trackString = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
+                            trackNumber = trackString?.substringBefore("/")?.toIntOrNull() ?: 0
+                        } finally {
+                            try { retrieverLocal.release() } catch (ignored: Exception) {}
                         }
-                    }.awaitAll()
+                    } catch (e: Exception) {
+                        // メタデータ取得失敗時はデフォルト値
+                    }
+
+                    songList.add(Song(Uri.fromFile(file), file.name, songTitle, songArtist, songAlbum, 0, trackNumber, directoryUri))
                 }
-                songList.addAll(results.filterNotNull())
             } else {
                  useFileApi = false // 0件の場合はフォールバック
             }
