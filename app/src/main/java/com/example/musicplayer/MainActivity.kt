@@ -99,9 +99,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.1.10: アルバム名文字化け対策（親フォルダ名をフォールバックとして使用）
-private const val APP_VERSION = "v2.1.10"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v40"
+// v2.1.11: 高速スクロールバー追加（全リスト対応）
+private const val APP_VERSION = "v2.1.11"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v41"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -1176,6 +1176,10 @@ fun FullScreenPlayer(
                             }
                         }
                     }
+                    VerticalScrollbar(
+                         modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+                         listState = listState
+                    )
                 }
             },
             confirmButton = {
@@ -1813,30 +1817,37 @@ fun PlaylistTab(playlists: List<Playlist>, songList: List<Song>, currentSong: So
                 Text("プレイリストがありません", style = MaterialTheme.typography.bodyMedium)
             } else {
                  // 文言削除
-                LazyColumn {
-                    items(playlists) { playlist ->
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .combinedClickable(
-                                    onClick = { selectedPlaylist = playlist },
-                                    onLongClick = { playlistToDelete = playlist }
+                val listState = rememberLazyListState()
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    LazyColumn(state = listState) {
+                        items(playlists) { playlist ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .combinedClickable(
+                                        onClick = { selectedPlaylist = playlist },
+                                        onLongClick = { playlistToDelete = playlist }
+                                    )
+                                    .padding(vertical = 12.dp)
+                            ) {
+                                Text(
+                                    playlist.name,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Medium
                                 )
-                                .padding(vertical = 12.dp)
-                        ) {
-                            Text(
-                                playlist.name,
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Medium
-                            )
-                            Text(
-                                "${playlist.songs.size} 曲",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                                Text(
+                                    "${playlist.songs.size} 曲",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            HorizontalDivider()
                         }
-                        HorizontalDivider()
                     }
+                    VerticalScrollbar(
+                        modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+                        listState = listState
+                    )
                 }
             }
         }
@@ -1922,7 +1933,8 @@ fun FolderList(
             }
         }
         HorizontalDivider()
-        LazyColumn {
+        val listState = rememberLazyListState()
+        LazyColumn(state = listState) {
             items(sortedItems) { item ->
                 Column(modifier = Modifier.clickable { onItemClick(item) }) {
                     // "Unknown" のような項目は「不明」と表示
@@ -1931,6 +1943,10 @@ fun FolderList(
                 }
             }
         }
+        VerticalScrollbar(
+            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+            listState = listState
+        )
     }
 }
 
@@ -2048,34 +2064,10 @@ fun SongList(songs: List<Song>, currentSong: Song?, onSongClick: (Song) -> Unit)
         LazyColumn(state = listState, modifier = Modifier.fillMaxWidth()) { 
             items(songs) { song -> SongListItem(song, (song == currentSong), onSongClick) } 
         }
-        // スクロールインジケーター（右側）
-        if (songs.size > 10) {
-            val scrollProgress = if (listState.layoutInfo.totalItemsCount > 0) {
-                listState.firstVisibleItemIndex.toFloat() / listState.layoutInfo.totalItemsCount.toFloat()
-            } else 0f
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .width(4.dp)
-                    .fillMaxHeight()
-                    .padding(vertical = 8.dp)
-            ) {
-                // スクロールトラック
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
-                )
-                // スクロールサム
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .fillMaxHeight(0.2f)
-                        .offset { IntOffset(0, (scrollProgress * 300).toInt()) }
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
-                )
-            }
-        }
+        VerticalScrollbar(
+            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+            listState = listState
+        )
     }
 }
 
@@ -2578,7 +2570,66 @@ fun DefaultPreview() {
  * 通知からのアクションを受け取るBroadcastReceiver
  * アプリ内にブロードキャストを転送する
  */
-class MusicNotificationReceiver : BroadcastReceiver() {
+// --- 共通コンポーネント ---
+
+@Composable
+fun VerticalScrollbar(
+    modifier: Modifier = Modifier,
+    listState: LazyListState,
+    thumbColor: Color = MaterialTheme.colorScheme.primary,
+    thumbWidth: Dp = 8.dp,
+    minThumbHeight: Dp = 32.dp
+) {
+    val coroutineScope = rememberCoroutineScope()
+    
+    // LayoutInfoを取得（再コンポーズのトリガーとして重要）
+    val layoutInfo = listState.layoutInfo
+    val totalItemsCount = layoutInfo.totalItemsCount
+    val visibleItemsInfo = layoutInfo.visibleItemsInfo
+    
+    if (totalItemsCount == 0 || visibleItemsInfo.isEmpty()) return
+    
+    BoxWithConstraints(modifier = modifier) {
+        val barHeight = maxHeight
+        val thumbHeight = (barHeight * (visibleItemsInfo.size.toFloat() / totalItemsCount.toFloat())).coerceAtLeast(minThumbHeight)
+        val scrollableHeight = barHeight - thumbHeight
+        
+        // スクロール位置計算
+        // firstVisibleItemIndex はスクロールの上端にあるアイテムのインデックス
+        val firstVisibleItemIndex = listState.firstVisibleItemIndex
+        
+        val maxScrollIndex = (totalItemsCount - visibleItemsInfo.size).coerceAtLeast(1)
+        val scrollProgress = (firstVisibleItemIndex.toFloat() / maxScrollIndex.toFloat()).coerceIn(0f, 1f)
+        
+        val thumbOffset = scrollableHeight * scrollProgress
+        
+        Box(
+            modifier = Modifier
+                .width(thumbWidth)
+                .height(thumbHeight)
+                .offset(y = thumbOffset)
+                .background(thumbColor, RoundedCornerShape(thumbWidth / 2))
+                .pointerInput(totalItemsCount, scrollableHeight) {
+                     detectVerticalDragGestures { change, dragAmount ->
+                         change.consume()
+                         val dragPercentage = dragAmount / scrollableHeight.toPx()
+                         val scrollItemAmount = dragPercentage * totalItemsCount
+                         
+                         val currentTarget = listState.firstVisibleItemIndex + scrollItemAmount
+                         val targetIndex = currentTarget.toInt().coerceIn(0, totalItemsCount - 1)
+                         
+                         coroutineScope.launch {
+                             listState.scrollToItem(targetIndex)
+                         }
+                     }
+                }
+        )
+    }
+}
+
+/**
+ * 通知からのアクションを受け取るBroadcastReceiver
+
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action ?: return
         
