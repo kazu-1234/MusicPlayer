@@ -2321,8 +2321,110 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
     val retriever = MediaMetadataRetriever()
     var processedCount = 0
 
+    // 高速化: Uriから実際のファイルパスを推測してjava.io.Fileを使用する
+    var useFileApi = false
+    var rootFile: File? = null
 
-    // SAFベースのスキャン（安定性優先、実機対応）
+    try {
+        if (DocumentsContract.isTreeUri(directoryUri)) {
+            val docId = DocumentsContract.getTreeDocumentId(directoryUri)
+            val split = docId.split(":")
+            if (split.size >= 2) {
+                val type = split[0]
+                val pathStr = split[1]
+                
+                val targetPath = if (type == "primary") {
+                    "/storage/emulated/0/$pathStr"
+                } else {
+                    "/storage/$type/$pathStr"
+                }
+                
+                val file = File(targetPath)
+                if (file.exists() && file.isDirectory && file.canRead()) {
+                    rootFile = file
+                    // 実機で問題発生のためFile APIを無効化
+                    // useFileApi = true
+                }
+            }
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+
+    if (useFileApi && rootFile != null) {
+        // java.io.File APIを使用した高速スキャン
+        try {
+            val allFiles = rootFile!!.walk()
+                .filter { it.isFile && (it.extension.equals("mp3", true) || it.extension.equals("m4a", true) || it.extension.equals("flac", true) || it.extension.equals("wav", true) || it.extension.equals("aac", true) || it.extension.equals("ogg", true)) }
+                .toList()
+            
+            
+            // val total = allFiles.size // 以前の総数を使用（walk().toList()しているので正確）
+            val total = allFiles.size 
+            
+            if (total > 0) {
+                // 順次処理（安定性優先）
+                var processedCount = 0
+                
+                allFiles.forEach { file ->
+                    processedCount++
+                    onProgress(processedCount.toFloat() / total.toFloat())
+                    
+                    val filePath = file.absolutePath
+                    val title = file.nameWithoutExtension
+                    
+                    var songTitle = title
+                    var songArtist = "Unknown Artist"
+                    var songAlbum = "Unknown Album"
+                    var trackNumber = 0
+
+                    try {
+                        val retrieverLocal = MediaMetadataRetriever()
+                        try {
+                            retrieverLocal.setDataSource(filePath)
+                            val extractedTitle = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+                            val extractedArtist = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+                            val extractedAlbum = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
+                            
+                            // 文字化け検出: U+FFFD、制御文字、Shift-JIS誤変換パターンをチェック
+                            fun isGarbled(s: String?): Boolean {
+                                if (s == null) return false
+                                // U+FFFDまたは制御文字
+                                if (s.contains('\uFFFD') || s.any { it.code < 32 && it != '\t' && it != '\n' && it != '\r' }) return true
+                                // Shift-JIS→UTF-8誤変換の典型パターン（ã,å,æ,ç,è,é の連続）
+                                val mojibakeChars = listOf('ã', 'å', 'æ', 'ç', 'è', 'é', 'ê', 'ë', 'ì', 'í', 'î', 'ï')
+                                val mojibakeCount = s.count { mojibakeChars.contains(it) }
+                                // 文字列の20%以上がmojibake文字なら文字化けと判定
+                                return s.length > 0 && mojibakeCount.toFloat() / s.length.toFloat() > 0.2f
+                            }
+                            
+                            songTitle = if (isGarbled(extractedTitle)) title else (extractedTitle ?: title)
+                            songArtist = if (isGarbled(extractedArtist)) "Unknown Artist" else (extractedArtist ?: "Unknown Artist")
+                            songAlbum = if (isGarbled(extractedAlbum)) "Unknown Album" else (extractedAlbum ?: "Unknown Album")
+                            
+                            val trackString = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
+                            trackNumber = trackString?.substringBefore("/")?.toIntOrNull() ?: 0
+                        } finally {
+                            try { retrieverLocal.release() } catch (ignored: Exception) {}
+                        }
+                    } catch (e: Exception) {
+                        // メタデータ取得失敗時はデフォルト値
+                    }
+
+                    songList.add(Song(Uri.fromFile(file), file.name, songTitle, songArtist, songAlbum, 0, trackNumber, directoryUri))
+                }
+            } else {
+                 useFileApi = false // 0件の場合はフォールバック
+            }
+
+        } catch (e: Exception) {
+            e.printStackTrace()
+            // 失敗時はDocumentFileロジックへ（下記）
+            useFileApi = false
+        }
+    }
+
+    if (!useFileApi) {
         // 従来のDocumentFileを使用したスキャン（低速だが確実）
         // v2.0.8: totalFilesが0（スキップされた）場合、プログレスは推定値や件数ベースにする必要があるが、
         // 簡易実装として 0.1f ずつ増やすなどの対応、あるいは「読み込み中... N曲」表示にする（呼び出し元で対応）
@@ -2372,24 +2474,9 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
                                     */
                                     val fileUri = DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId)
                                     retriever.setDataSource(context, fileUri)
-                                    
-                                    val extractedTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
-                                    val extractedArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
-                                    val extractedAlbum = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
-                                    
-                                    // 文字化け検出: mojibakeパターン（ã,å,æ等）を含む場合はファイル名を使用
-                                    fun isGarbled(s: String?): Boolean {
-                                        if (s == null) return false
-                                        if (s.contains('\uFFFD') || s.any { it.code < 32 && it != '\t' && it != '\n' && it != '\r' }) return true
-                                        val mojibakeChars = listOf('ã', 'å', 'æ', 'ç', 'è', 'é', 'ê', 'ë', 'ì', 'í', 'î', 'ï')
-                                        val mojibakeCount = s.count { mojibakeChars.contains(it) }
-                                        return s.length > 0 && mojibakeCount.toFloat() / s.length.toFloat() > 0.2f
-                                    }
-                                    
-                                    songTitle = if (isGarbled(extractedTitle)) songTitle else (extractedTitle ?: songTitle)
-                                    songArtist = if (isGarbled(extractedArtist)) "Unknown Artist" else (extractedArtist ?: "Unknown Artist")
-                                    songAlbum = if (isGarbled(extractedAlbum)) "Unknown Album" else (extractedAlbum ?: "Unknown Album")
-                                    
+                                    songTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE) ?: songTitle
+                                    songArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST) ?: "Unknown Artist"
+                                    songAlbum = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM) ?: "Unknown Album"
                                     val trackString = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
                                     trackNumber = trackString?.substringBefore("/")?.toIntOrNull() ?: 0
                                 } catch (e: Exception) {
