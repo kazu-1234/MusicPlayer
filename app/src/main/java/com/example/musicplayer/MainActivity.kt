@@ -2282,9 +2282,8 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
             if (total > 0) {
                  allFiles.forEach { file ->
                     processedCount++
-                    if (processedCount % 10 == 0) { // UI更新頻度を調整
-                        onProgress(processedCount.toFloat().coerceAtMost(total.toFloat()) / total.toFloat())
-                    }
+                    // 毎曲ごとにUI更新
+                    onProgress(processedCount.toFloat() / total.toFloat())
                     
                     try {
                         val filePath = file.absolutePath

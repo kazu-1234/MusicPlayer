@@ -247,8 +247,8 @@ class MusicScanService : Service() {
                     .toList()
                 val total = allFiles.size 
                 if (total > 0) {
-                    // 並列処理: 全ファイルを10並列で処理
-                    val semaphore = kotlinx.coroutines.sync.Semaphore(10) // 最大10並列
+                    // 並列処理: 全ファイルを50並列で処理
+                    val semaphore = kotlinx.coroutines.sync.Semaphore(50) // 最大50並列
                     var processedLocal = java.util.concurrent.atomic.AtomicInteger(0)
                     
                     val results = coroutineScope {
