@@ -2590,29 +2590,7 @@ fun VerticalScrollbar(
     if (totalItemsCount == 0 || visibleItemsInfo.isEmpty() || visibleItemsInfo.size >= totalItemsCount) return
     
     BoxWithConstraints(
-        modifier = modifier
-            .width(thumbWidth * 4) // タッチ領域を広げる（見た目はthumbWidthだが、見えない判定領域を持つ）
-            .pointerInput(totalItemsCount, maxHeight) {
-                detectVerticalDragGestures(
-                    onDragStart = { offset ->
-                        // タップ/ドラッグ開始位置へジャンプ
-                        val scrollProgress = (offset.y / size.height.toFloat()).coerceIn(0f, 1f)
-                        val targetIndex = (scrollProgress * totalItemsCount).toInt()
-                        coroutineScope.launch {
-                            listState.scrollToItem(targetIndex)
-                        }
-                    },
-                    onDrag = { change, _ ->
-                        change.consume()
-                        // ドラッグ中の位置へ追従
-                        val scrollProgress = (change.position.y / size.height.toFloat()).coerceIn(0f, 1f)
-                        val targetIndex = (scrollProgress * totalItemsCount).toInt()
-                        coroutineScope.launch {
-                            listState.scrollToItem(targetIndex)
-                        }
-                    }
-                )
-            }
+        modifier = modifier.width(thumbWidth * 4) // タッチ領域を確保
     ) {
         val barHeight = maxHeight
         val scrollWindowSize = visibleItemsInfo.size.toFloat() / totalItemsCount.toFloat()
@@ -2626,15 +2604,42 @@ fun VerticalScrollbar(
         
         val thumbOffset = scrollableHeight * scrollProgress
         
-        // 実際のバー（右端に寄せる）
+        // タッチ操作を受け付ける透明なBox
         Box(
             modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .width(thumbWidth)
-                .height(thumbHeight)
-                .offset(y = thumbOffset)
-                .background(thumbColor.copy(alpha = 0.6f), RoundedCornerShape(thumbWidth / 2))
-        )
+                .fillMaxSize()
+                .pointerInput(totalItemsCount, barHeight) {
+                    detectVerticalDragGestures(
+                        onDragStart = { offset ->
+                            // タップ/ドラッグ開始位置へジャンプ
+                            val progress = (offset.y / size.height.toFloat()).coerceIn(0f, 1f)
+                            val targetIndex = (progress * totalItemsCount).toInt()
+                            coroutineScope.launch {
+                                listState.scrollToItem(targetIndex)
+                            }
+                        },
+                        onVerticalDrag = { change, _ ->
+                            change.consume()
+                            // ドラッグ中の位置へ追従
+                            val progress = (change.position.y / size.height.toFloat()).coerceIn(0f, 1f)
+                            val targetIndex = (progress * totalItemsCount).toInt()
+                            coroutineScope.launch {
+                                listState.scrollToItem(targetIndex)
+                            }
+                        }
+                    )
+                }
+        ) {
+            // 実際のバー（右端に表示）
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .width(thumbWidth)
+                    .height(thumbHeight)
+                    .offset(y = thumbOffset)
+                    .background(thumbColor.copy(alpha = 0.6f), RoundedCornerShape(thumbWidth / 2))
+            )
+        }
     }
 }
 
