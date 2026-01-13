@@ -99,9 +99,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.1.9: メタデータ文字化け判定強化（C1制御文字対応）
-private const val APP_VERSION = "v2.1.9"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v39"
+// v2.1.10: アルバム名文字化け対策（親フォルダ名をフォールバックとして使用）
+private const val APP_VERSION = "v2.1.10"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v40"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -2362,18 +2362,18 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
     }
 
     // 再帰的にディレクトリを探索する関数
-    suspend fun traverseDirectory(currentUri: Uri) {
+    suspend fun traverseDirectory(currentUri: Uri, parentName: String) {
         try {
             val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(directoryUri, DocumentsContract.getDocumentId(currentUri))
             contentResolver.query(childrenUri, null, null, null, null)?.use { cursor ->
                 while (cursor.moveToNext()) {
                     val docId = cursor.getString(cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID))
                     val mimeType = cursor.getString(cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE))
+                    val name = cursor.getString(cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)) ?: ""
                     
                     if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
-                        traverseDirectory(DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId))
+                        traverseDirectory(DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId), name)
                     } else {
-                        val name = cursor.getString(cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)) ?: ""
                         val ext = name.substringAfterLast('.', "").lowercase()
                         
                         // 拡張子チェック
@@ -2386,7 +2386,7 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
                             
                             var songTitle = name.substringBeforeLast('.')
                             var songArtist = "Unknown Artist"
-                            var songAlbum = "Unknown Album"
+                            var songAlbum = parentName // デフォルトは親フォルダ名
                             var trackNumber = 0
                             
                             // メタデータ取得（各ファイルで新しいretrieverを使用）
@@ -2401,7 +2401,8 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
                                     
                                     songTitle = if (isGarbled(extractedTitle)) songTitle else (extractedTitle ?: songTitle)
                                     songArtist = if (isGarbled(extractedArtist)) "Unknown Artist" else (extractedArtist ?: "Unknown Artist")
-                                    songAlbum = if (isGarbled(extractedAlbum)) "Unknown Album" else (extractedAlbum ?: "Unknown Album")
+                                    // アルバム名が文字化けまたは空の場合は親フォルダ名を使用
+                                    songAlbum = if (isGarbled(extractedAlbum)) parentName else (extractedAlbum ?: parentName)
                                     
                                     val trackString = localRetriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
                                     trackNumber = trackString?.substringBefore("/")?.toIntOrNull() ?: 0
@@ -2409,7 +2410,7 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
                                     try { localRetriever.release() } catch (ignored: Exception) {}
                                 }
                             } catch (e: Exception) {
-                                 // メタデータ取得失敗時はデフォルト値を使用
+                                 // メタデータ取得失敗時はデフォルト値（ファイル名、親フォルダ名）を使用
                             }
 
                             songList.add(Song(DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId), name, songTitle, songArtist, songAlbum, 0, trackNumber, directoryUri))
@@ -2420,7 +2421,8 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
         } catch (e: Exception) { e.printStackTrace() }
     }
     
-    traverseDirectory(documentsTree)
+    val rootName = getFileName(context, directoryUri) ?: "Unknown Album"
+    traverseDirectory(documentsTree, rootName)
     
     // 最後にソート（デフォルト順）
     return@withContext songList.sortedBy { it.title }
