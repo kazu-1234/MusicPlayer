@@ -109,6 +109,7 @@ private const val KEY_SOURCE_FOLDER_URIS = "sourceFolderUris"
 private const val KEY_TAB_ORDER = "tabOrder"
 private const val KEY_PLAYLIST_BASE_PATH = "playlistBasePath"
 private const val KEY_USE_SYSTEM_MEDIA_CONTROLLER = "useSystemMediaController"
+private const val KEY_SHOW_MISSING_FILES = "showMissingFiles"
 private const val LIBRARY_CACHE_FILE = "library.json"
 private const val PLAYLIST_CACHE_FILE = "playlists.json"
 
@@ -1444,6 +1445,25 @@ fun SettingsScreen(
                     Switch(checked = useSystemMediaController, onCheckedChange = onUseSystemMediaControllerChange)
                 }
                 Text("通知パネルのデザインを変更します", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(8.dp))
+                
+                // 存在しないファイル表示設定
+                var showMissingFiles by remember { mutableStateOf(getShowMissingFiles(context)) }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("存在しないファイルを表示", modifier = Modifier.weight(1f))
+                    Switch(
+                        checked = showMissingFiles,
+                        onCheckedChange = {
+                            showMissingFiles = it
+                            saveShowMissingFiles(context, it)
+                        }
+                    )
+                }
+                Text("プレイリスト内のファイルがない曲をグレーアウトで表示します", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 
                 Text("ライブラリ管理", style = MaterialTheme.typography.titleLarge)
@@ -2100,6 +2120,16 @@ private fun saveUseSystemMediaController(context: Context, use: Boolean) {
 private fun getUseSystemMediaController(context: Context): Boolean {
     return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         .getBoolean(KEY_USE_SYSTEM_MEDIA_CONTROLLER, false)
+}
+
+// 存在しないファイル表示設定の保存・取得関数
+private fun saveShowMissingFiles(context: Context, show: Boolean) {
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        .putBoolean(KEY_SHOW_MISSING_FILES, show).apply()
+}
+private fun getShowMissingFiles(context: Context): Boolean {
+    return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .getBoolean(KEY_SHOW_MISSING_FILES, true) // デフォルトは表示
 }
 
 private fun saveUriList(context: Context, key: String, uris: List<Uri>) {
