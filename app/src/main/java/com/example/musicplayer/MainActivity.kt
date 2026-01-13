@@ -90,9 +90,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.1.0: スキャン進捗表示改善、キューUI改善（ドラッグ並び替えアニメーション）
-private const val APP_VERSION = "v2.1.0"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-13 v30"
+// v2.1.1: 設定UI改善、並列スキャン修正
+private const val APP_VERSION = "v2.1.1"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-13 v31"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -1548,57 +1548,62 @@ fun SettingsScreen(
                 var updateReleaseNotes by remember { mutableStateOf<String?>(null) }
                 var showUpdateConfirmDialog by remember { mutableStateOf(false) }
                 
-                Button(
-                    onClick = {
-                        isCheckingUpdate = true
-                        updateInfo = null
-                        coroutineScope.launch {
-                            try {
-                                val result = withContext(Dispatchers.IO) {
-                                    checkForUpdate()
-                                }
-                                latestVersion = result.first
-                                downloadUrl = result.second
-                                updateReleaseNotes = result.third
-                                
-                                if (latestVersion != null) {
-                                    val normalize = { v: String -> v.removePrefix("v").split(".").map { it.toIntOrNull() ?: 0 } }
-                                    val currentParts = normalize(APP_VERSION)
-                                    val latestParts = normalize(latestVersion!!)
-                                    
-                                    var isNewer = false
-                                    val length = maxOf(currentParts.size, latestParts.size)
-                                    for (i in 0 until length) {
-                                        val c = currentParts.getOrElse(i) { 0 }
-                                        val l = latestParts.getOrElse(i) { 0 }
-                                        if (l > c) {
-                                            isNewer = true
-                                            break
-                                        }
-                                        if (l < c) break
-                                    }
-
-                                    if (isNewer) {
-                                        updateInfo = "新しいバージョン $latestVersion が利用可能です"
-                                        showUpdateConfirmDialog = true
-                                    } else {
-                                        updateInfo = "最新バージョンです"
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                updateInfo = "エラー: ${e.message}"
-                            }
-                            isCheckingUpdate = false
-                        }
-                    },
-                    enabled = !isCheckingUpdate
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(if (isCheckingUpdate) "確認中..." else "更新を確認")
-                }
-                
-                updateInfo?.let {
-                    Spacer(Modifier.height(8.dp))
-                    Text(it, style = MaterialTheme.typography.bodyMedium)
+                    Button(
+                        onClick = {
+                            isCheckingUpdate = true
+                            updateInfo = null
+                            coroutineScope.launch {
+                                try {
+                                    val result = withContext(Dispatchers.IO) {
+                                        checkForUpdate()
+                                    }
+                                    latestVersion = result.first
+                                    downloadUrl = result.second
+                                    updateReleaseNotes = result.third
+                                    
+                                    if (latestVersion != null) {
+                                        val normalize = { v: String -> v.removePrefix("v").split(".").map { it.toIntOrNull() ?: 0 } }
+                                        val currentParts = normalize(APP_VERSION)
+                                        val latestParts = normalize(latestVersion!!)
+                                        
+                                        var isNewer = false
+                                        val length = maxOf(currentParts.size, latestParts.size)
+                                        for (i in 0 until length) {
+                                            val c = currentParts.getOrElse(i) { 0 }
+                                            val l = latestParts.getOrElse(i) { 0 }
+                                            if (l > c) {
+                                                isNewer = true
+                                                break
+                                            }
+                                            if (l < c) break
+                                        }
+
+                                        if (isNewer) {
+                                            updateInfo = "新しいバージョン $latestVersion が利用可能です"
+                                            showUpdateConfirmDialog = true
+                                        } else {
+                                            updateInfo = "最新バージョンです"
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    updateInfo = "エラー: ${e.message}"
+                                }
+                                isCheckingUpdate = false
+                            }
+                        },
+                        enabled = !isCheckingUpdate
+                    ) {
+                        Text(if (isCheckingUpdate) "確認中..." else "更新を確認")
+                    }
+                    
+                    updateInfo?.let {
+                        Spacer(Modifier.width(12.dp))
+                        Text(it, style = MaterialTheme.typography.bodyMedium)
+                    }
                 }
 
                 if (showUpdateConfirmDialog && latestVersion != null && downloadUrl != null) {
