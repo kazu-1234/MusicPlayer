@@ -15,3 +15,9 @@ data class Song(
 )
 
 data class Playlist(val name: String, val songs: List<Song>)
+
+// Enums
+enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
+enum class SortOrder { ASC, DESC }
+enum class TabType { SONGS, PLAYLISTS, ARTISTS, ALBUMS }
+enum class RepeatMode { OFF, ALL, ONE }

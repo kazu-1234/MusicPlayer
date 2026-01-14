@@ -102,49 +102,13 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.4.6: アルバムアート読み込み最適化 (Downsampling & LazyColumn Key)
-private const val APP_VERSION = "v2.4.6"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-15 v67"
+// v2.5.0: リファクタリング (ファイル分割 Model/Utils)
+private const val APP_VERSION = "v2.5.0"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-15 v68"
 
-// --- アルバムアートキャッシュ (v2.4.5) ---
-object AlbumArtCache {
-    private val maxMemory = (Runtime.getRuntime().maxMemory() / 1024).toInt()
-    private val cacheSize = maxMemory / 8 // メモリの1/8を使用
-    private val memoryCache = object : android.util.LruCache<String, android.graphics.Bitmap>(cacheSize) {
-        override fun sizeOf(key: String, bitmap: android.graphics.Bitmap): Int {
-            return bitmap.byteCount / 1024 // KB単位
-        }
-    }
 
-    fun get(key: String): android.graphics.Bitmap? = memoryCache.get(key)
-    fun put(key: String, bitmap: android.graphics.Bitmap) {
-        if (get(key) == null) {
-            memoryCache.put(key, bitmap)
-        }
-    }
-}
 
-// 画像リサイズ用ユーティリティ
-fun calculateInSampleSize(options: android.graphics.BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
-    val (height: Int, width: Int) = options.run { outHeight to outWidth }
-    var inSampleSize = 1
 
-    if (height > reqHeight || width > reqWidth) {
-        val halfHeight: Int = height / 2
-        val halfWidth: Int = width / 2
-
-        while (inSampleSize * 2 <= 64 && (halfHeight / inSampleSize) >= reqHeight && (halfWidth / inSampleSize) >= reqWidth) {
-            inSampleSize *= 2
-        }
-    }
-    return inSampleSize
-}
-
-// --- データ構造の定義 ---
-enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
-enum class SortOrder { ASC, DESC }
-enum class TabType { SONGS, PLAYLISTS, ARTISTS, ALBUMS }
-enum class RepeatMode { OFF, ALL, ONE }
 
 // --- 定数 ---
 private const val PREFS_NAME = "MusicPlayerPrefs"
