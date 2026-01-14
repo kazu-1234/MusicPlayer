@@ -102,9 +102,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.1.14: スクロールバー精度向上（位置ズレ修正）
-private const val APP_VERSION = "v2.1.14"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v50"
+// v2.1.15: スクロールバー不具合修正（ドラッグ位置の計算ミス修正）
+private const val APP_VERSION = "v2.1.15"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v51"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -2567,6 +2567,7 @@ private fun downloadAndInstallApk(context: Context, url: String) {
 
 
 
+
 @Preview(showBackground = true)
 @Composable
 fun DefaultPreview() {
@@ -2633,18 +2634,25 @@ fun VerticalScrollbar(
                             val thumbHeightPx = thumbHeight.toPx()
                             val scrollableHeightPx = barHeightPx - thumbHeightPx
                             
-                            // 現在のつまみ位置を再計算（タッチ時点の最新状態）
+                            // 現在のつまみ位置を再計算（タッチ時点の最新状態をlistStateから直接取得）
+                            // pointerInputのキャプチャ変数ではなく、最新のlayoutInfoを使用する
+                            val currentLayoutInfo = listState.layoutInfo
+                            val currentVisibleItems = currentLayoutInfo.visibleItemsInfo
+                            val currentTotalItems = currentLayoutInfo.totalItemsCount
+                            
                             val currentFirstIndex = listState.firstVisibleItemIndex
                             val currentFirstOffset = listState.firstVisibleItemScrollOffset
-                            // pointerInputスコープ内ではvisibleItemsInfoにアクセスできないため、簡易計算またはcaptured valueを使用
-                            // captureされたvisibleItemsInfoを使用（再コンポーズ毎に更新されるため概ね正しい）
-                            val currentAvgItemHeight = if (visibleItemsInfo.isNotEmpty()) {
-                                visibleItemsInfo.sumOf { it.size } / visibleItemsInfo.size.toFloat()
-                            } else 1f // 0除算回避
+                            
+                            val currentAvgItemHeight = if (currentVisibleItems.isNotEmpty()) {
+                                currentVisibleItems.sumOf { it.size } / currentVisibleItems.size.toFloat()
+                            } else 1f
                             
                             val currentOffsetInItem = currentFirstOffset.toFloat() / currentAvgItemHeight
                             val currentAccurateIndex = currentFirstIndex + currentOffsetInItem
-                            val currentProgressCaptured = (currentAccurateIndex / totalItemsCount.toFloat()).coerceIn(0f, 1f)
+                            
+                            // currentTotalItemsを使用（0除算回避）
+                            val totalForCalc = if (currentTotalItems > 0) currentTotalItems else 1
+                            val currentProgressCaptured = (currentAccurateIndex / totalForCalc.toFloat()).coerceIn(0f, 1f)
                             
                             val currentThumbY = scrollableHeightPx * currentProgressCaptured
                             
