@@ -102,9 +102,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.4.2: クラッシュ修正 (WAKE_LOCK権限追加)
-private const val APP_VERSION = "v2.4.2"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-15 v63"
+// v2.4.3: スリープ時の通知操作修正 (Cycle Cleanup)
+private const val APP_VERSION = "v2.4.3"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-15 v64"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -478,7 +478,17 @@ fun MusicPlayerScreen(
         
         onDispose {
             if (isBound) {
+                // コールバックを解除してリーク/クラッシュを防止
+                musicService?.let { svc ->
+                    svc.onPlaybackStateChanged = null
+                    svc.onSongChanged = null
+                    svc.onPositionChanged = null
+                    svc.onQueueChanged = null
+                    svc.onPlayCountUpdated = null
+                }
                 context.unbindService(serviceConnection)
+                isBound = false
+                musicService = null
             }
         }
     }
