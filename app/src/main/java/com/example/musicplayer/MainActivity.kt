@@ -102,9 +102,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.2.0: 再生キューからスクロールバー削除（ドラッグ並び替え復元）
-private const val APP_VERSION = "v2.2.0"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v56"
+// v2.2.1: プレイリスト曲マッチング修正（同名ファイル誤マッチ防止）
+private const val APP_VERSION = "v2.2.1"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v57"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -2480,13 +2480,26 @@ private suspend fun parseM3uPlaylist(context: Context, playlistUri: Uri, allSong
                             }
                         }
                         
-                        // 方法2: フォールバック - ファイル名のみでマッチング
-                        if (matchedSong == null) {
-                            val fileName = trimmedLine.substringAfterLast('/').substringAfterLast('\\').trim()
-                            matchedSong = songsByDisplayName[fileName]
-                        }
+                        // ファイル名のみでのフォールバックは削除
+                        // 異なるパスの同名ファイルを誤ってマッチさせる原因となるため
                         
-                        matchedSong?.let { playlistSongs.add(it) }
+                        if (matchedSong != null) {
+                            playlistSongs.add(matchedSong)
+                        } else {
+                            // マッチしなかった場合はプレースホルダーを作成（存在しない曲として表示）
+                            val fileName = trimmedLine.substringAfterLast('/').substringAfterLast('\\').trim()
+                            playlistSongs.add(Song(
+                                uri = Uri.parse("file://$trimmedLine"),
+                                displayName = fileName,
+                                title = fileName.substringBeforeLast("."),
+                                artist = "不明",
+                                album = "不明",
+                                playCount = 0,
+                                trackNumber = 0,
+                                sourceFolderUri = Uri.EMPTY,
+                                exists = false
+                            ))
+                        }
                     }
                 }
             }
