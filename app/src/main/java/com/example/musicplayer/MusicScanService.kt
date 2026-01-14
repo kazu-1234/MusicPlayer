@@ -292,15 +292,55 @@ class MusicScanService : Service() {
             }
         } catch (e: Exception) { e.printStackTrace() }
 
-        if (useFileApi && rootFile != null) {
-            try {
+                                    val fileUri = DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId)
+                                    val localRetriever = MediaMetadataRetriever()
+                                    try {
+                                        localRetriever.setDataSource(context, fileUri)
+                                        val extractedTitle = localRetriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+                                        val extractedArtist = localRetriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+                                        val extractedAlbum = localRetriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
+                                        
+                                        val fixedTitle = fixEncoding(extractedTitle)
+                                        val fixedArtist = fixEncoding(extractedArtist)
+                                        val fixedAlbum = fixEncoding(extractedAlbum)
+                                        
+                                        songTitle = if (isGarbled(fixedTitle)) songTitle else (fixedTitle ?: songTitle)
+                                        songArtist = if (isGarbled(fixedArtist)) "Unknown Artist" else (fixedArtist ?: "Unknown Artist")
+                                        songAlbum = if (isGarbled(fixedAlbum)) "Unknown Album" else (fixedAlbum ?: "Unknown Album")
+                                        
+                                        val trackString = localRetriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
+                                        trackNumber = trackString?.substringBefore("/")?.toIntOrNull() ?: 0
+                                    } finally {
+                                        try { localRetriever.release() } catch (ignored: Exception) {}
+                                    }
+                                } catch (e: Exception) {
+                                     // メタデータ取得失敗時はデフォルト値を使用
+                                }
+
+                                songList.add(Song(DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId), name, songTitle, songArtist, songAlbum, 0, trackNumber, directoryUri))
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+    
+    val rootName = if (DocumentsContract.isTreeUri(directoryUri)) {
+         DocumentsContract.getTreeDocumentId(directoryUri).split(":").lastOrNull() ?: "Unknown Album"
+    } else {
+        File(directoryUri.path ?: "").name
+    }
+    
+    if (useFileApi && rootFile != null) {
+          // File API logic (Parallel)
+          try {
                 val allFiles = rootFile!!.walk()
                     .filter { it.isFile && (it.extension.equals("mp3", true) || it.extension.equals("m4a", true) || it.extension.equals("flac", true) || it.extension.equals("wav", true) || it.extension.equals("aac", true) || it.extension.equals("ogg", true)) }
                     .toList()
                 val total = allFiles.size 
                 if (total > 0) {
-                    // 並列処理: 全ファイルを50並列で処理
-                    val semaphore = kotlinx.coroutines.sync.Semaphore(50) // 最大50並列
+                    val semaphore = kotlinx.coroutines.sync.Semaphore(50)
                     var processedLocal = java.util.concurrent.atomic.AtomicInteger(0)
                     
                     val results = coroutineScope {
@@ -320,26 +360,21 @@ class MusicScanService : Service() {
                                     var songAlbum = "Unknown Album"
                                     var trackNumber = 0
 
+                                    // Local isGarbled removed (using class member)
+
                                     try {
                                         retrieverLocal.setDataSource(filePath)
                                         val extractedTitle = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
                                         val extractedArtist = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
                                         val extractedAlbum = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
                                         
-                                        // 文字化け検出: U+FFFD、制御文字、Shift-JIS誤変換パターンをチェック
-                                        fun isGarbled(s: String?): Boolean {
-                                            if (s == null) return false
-                                            // U+FFFDまたは制御文字
-                                            if (s.contains('\uFFFD') || s.any { it.code < 32 && it != '\t' && it != '\n' && it != '\r' }) return true
-                                            // Shift-JIS→UTF-8誤変換の典型パターン
-                                            val mojibakeChars = listOf('ã', 'å', 'æ', 'ç', 'è', 'é', 'ê', 'ë', 'ì', 'í', 'î', 'ï')
-                                            val mojibakeCount = s.count { mojibakeChars.contains(it) }
-                                            return s.length > 0 && mojibakeCount.toFloat() / s.length.toFloat() > 0.2f
-                                        }
+                                        val fixedTitle = fixEncoding(extractedTitle)
+                                        val fixedArtist = fixEncoding(extractedArtist)
+                                        val fixedAlbum = fixEncoding(extractedAlbum)
                                         
-                                        songTitle = if (isGarbled(extractedTitle)) title else (extractedTitle ?: title)
-                                        songArtist = if (isGarbled(extractedArtist)) "Unknown Artist" else (extractedArtist ?: "Unknown Artist")
-                                        songAlbum = if (isGarbled(extractedAlbum)) "Unknown Album" else (extractedAlbum ?: "Unknown Album")
+                                        songTitle = if (isGarbled(fixedTitle)) title else (fixedTitle ?: title)
+                                        songArtist = if (isGarbled(fixedArtist)) "Unknown Artist" else (fixedArtist ?: "Unknown Artist")
+                                        songAlbum = if (isGarbled(fixedAlbum)) "Unknown Album" else (fixedAlbum ?: "Unknown Album")
                                         
                                         val trackString = retrieverLocal.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
                                         trackNumber = trackString?.substringBefore("/")?.toIntOrNull() ?: 0
@@ -366,51 +401,68 @@ class MusicScanService : Service() {
                 e.printStackTrace()
                 useFileApi = false
             }
-        }
-
-        if (!useFileApi) {
-            val contentResolver = context.contentResolver
-            val documentsTree = DocumentsContract.buildDocumentUriUsingTree(directoryUri, DocumentsContract.getTreeDocumentId(directoryUri))
-            fun traverseDirectory(currentUri: Uri) {
-                try {
-                    val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(directoryUri, DocumentsContract.getDocumentId(currentUri))
-                    contentResolver.query(childrenUri, null, null, null, null)?.use { cursor ->
-                        while (cursor.moveToNext()) {
-                            val docId = cursor.getString(cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID))
-                            val mimeType = cursor.getString(cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE))
-                            if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
-                                traverseDirectory(DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId))
-                            } else {
-                                val name = cursor.getString(cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)) ?: ""
-                                val ext = name.substringAfterLast('.', "").lowercase()
-                                if (mimeType.startsWith("audio/") || mimeType == "application/ogg" || setOf("mp3", "m4a", "flac", "wav", "aac", "ogg").contains(ext)) {
-                                    processedCount++
-                                    onProgress(0f, processedCount) // SAF unknown total
-                                    
-                                    var songTitle = name.substringBeforeLast('.')
-                                    var songArtist = "Unknown Artist"
-                                    var songAlbum = "Unknown Album"
-                                    var trackNumber = 0
+    }
+    
+    // SAF fallback logic if File API failed or not applicable
+    if (!useFileApi) {
+         val contentResolver = context.contentResolver
+         val documentsTree = DocumentsContract.buildDocumentUriUsingTree(directoryUri, DocumentsContract.getTreeDocumentId(directoryUri))
+         // Recursive SAF traversal (Simplified for brevity regarding replacement, ensure complete logic is present)
+         suspend fun traverseDirectory(currentUri: Uri) {
+             try {
+                val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(directoryUri, DocumentsContract.getDocumentId(currentUri))
+                contentResolver.query(childrenUri, null, null, null, null)?.use { cursor ->
+                    while (cursor.moveToNext()) {
+                        val docId = cursor.getString(cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID))
+                        val mimeType = cursor.getString(cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE))
+                        if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
+                            traverseDirectory(DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId))
+                        } else {
+                            val name = cursor.getString(cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)) ?: ""
+                            val ext = name.substringAfterLast('.', "").lowercase()
+                            if (mimeType.startsWith("audio/") || mimeType == "application/ogg" || setOf("mp3", "m4a", "flac", "wav", "aac", "ogg").contains(ext)) {
+                                processedCount++
+                                onProgress(0f, processedCount)
+                                
+                                var songTitle = name.substringBeforeLast('.')
+                                var songArtist = "Unknown Artist"
+                                var songAlbum = "Unknown Album"
+                                var trackNumber = 0
+                                try {
+                                    val fileUri = DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId)
+                                    val localRetrieverSAFE = MediaMetadataRetriever()
                                     try {
-                                        val fileUri = DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId)
-                                        retriever.setDataSource(context, fileUri)
-                                        songTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE) ?: songTitle
-                                        songArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST) ?: "Unknown Artist"
-                                        songAlbum = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM) ?: "Unknown Album"
-                                        val trackString = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
+                                        localRetrieverSAFE.setDataSource(context, fileUri)
+                                        val extractedTitle = localRetrieverSAFE.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+                                        val extractedArtist = localRetrieverSAFE.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+                                        val extractedAlbum = localRetrieverSAFE.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
+                                        
+                                        val fixedTitle = fixEncoding(extractedTitle)
+                                        val fixedArtist = fixEncoding(extractedArtist)
+                                        val fixedAlbum = fixEncoding(extractedAlbum)
+                                        
+                                        songTitle = if (isGarbled(fixedTitle)) songTitle else (fixedTitle ?: songTitle)
+                                        songArtist = if (isGarbled(fixedArtist)) "Unknown Artist" else (fixedArtist ?: "Unknown Artist")
+                                        songAlbum = if (isGarbled(fixedAlbum)) "Unknown Album" else (fixedAlbum ?: "Unknown Album")
+                                        
+                                        val trackString = localRetrieverSAFE.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
                                         trackNumber = trackString?.substringBefore("/")?.toIntOrNull() ?: 0
-                                    } catch (e: Exception) { }
-                                    songList.add(Song(DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId), name, songTitle, songArtist, songAlbum, 0, trackNumber, directoryUri))
-                                }
+                                    } finally {
+                                        try { localRetrieverSAFE.release() } catch (ignored: Exception) {}
+                                    }
+                                } catch (e: Exception) {}
+                                songList.add(Song(DocumentsContract.buildDocumentUriUsingTree(directoryUri, docId), name, songTitle, songArtist, songAlbum, 0, trackNumber, directoryUri))
                             }
                         }
                     }
-                } catch (e: Exception) { e.printStackTrace() }
-            }
-            traverseDirectory(documentsTree)
-        }
-        return@withContext songList.sortedBy { it.title }
+                }
+             } catch (e: Exception) { e.printStackTrace() }
+         }
+         traverseDirectory(documentsTree)
     }
+
+    return@withContext songList.sortedBy { it.title }
+}
 }
 
 // Global holder for result to avoid Parcelable overhead

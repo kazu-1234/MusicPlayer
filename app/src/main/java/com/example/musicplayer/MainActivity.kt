@@ -105,9 +105,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.5.2: ナビゲーション挙動変更 (フォルダ展開)
-private const val APP_VERSION = "v2.5.2"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-15 v70"
+// v2.5.3: スキャンクラッシュ修正 & バックグラウンドサービス化
+private const val APP_VERSION = "v2.5.3"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-15 v71"
 
 // --- アルバムアートキャッシュ (v2.5.0: 永続化対応) ---
 object AlbumArtCache {
@@ -438,13 +438,73 @@ sealed class Screen {
     object Settings : Screen()
 }
 
+// ヘルパー関数: サービス起動
+fun startScanServiceHelper(context: Context, uris: List<Uri>) {
+    val intent = Intent(context, MusicScanService::class.java).apply {
+        action = MusicScanService.ACTION_START_SCAN
+        putParcelableArrayListExtra(MusicScanService.EXTRA_SCAN_URIS, ArrayList(uris))
+    }
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+        context.startForegroundService(intent)
+    } else {
+        context.startService(intent)
+    }
+}
+
 @Composable
 fun MusicApp(useSystemMediaController: Boolean, onUseSystemMediaControllerChange: (Boolean) -> Unit) {
     var currentScreen by remember { mutableStateOf<Screen>(Screen.Main) }
     var songList by remember { mutableStateOf<List<Song>>(emptyList()) }
     var playlists by remember { mutableStateOf<List<Playlist>>(emptyList()) }
-    var libraryUpdateKey by remember { mutableStateOf(0) }
+    
+    // スキャン進捗を管理するState (v2.5.3)
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    var scanProgress by remember { mutableFloatStateOf(0f) }
+    var scanCount by remember { mutableIntStateOf(0) }
+    var isScanning by remember { mutableStateOf(false) }
+
+    // Scan Service Receiver
+    DisposableEffect(Unit) {
+        val scanReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    MusicScanService.ACTION_SCAN_PROGRESS -> {
+                        scanProgress = intent.getFloatExtra(MusicScanService.EXTRA_PROGRESS, 0f)
+                        scanCount = intent.getIntExtra(MusicScanService.EXTRA_CURRENT_COUNT, 0)
+                        isScanning = true
+                    }
+                    MusicScanService.ACTION_SCAN_COMPLETE -> {
+                        isScanning = false
+                        val newSongs = ScanResultHolder.scannedSongs
+                        if (!newSongs.isNullOrEmpty()) {
+                            songList = (songList + newSongs).distinctBy { it.uri }.sortedBy { it.title }
+                            ScanResultHolder.scannedSongs = null // Clear memory
+                            Toast.makeText(context, "${newSongs.size}曲を追加しました", Toast.LENGTH_SHORT).show()
+                            coroutineScope.launch { saveLibraryToFile(context!!, songList) }
+                        } else {
+                            // Toast.makeText(context, "スキャン完了", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+        }
+        val filter = android.content.IntentFilter().apply {
+            addAction(MusicScanService.ACTION_SCAN_PROGRESS)
+            addAction(MusicScanService.ACTION_SCAN_COMPLETE)
+        }
+        androidx.core.content.ContextCompat.registerReceiver(
+            context,
+            scanReceiver,
+            filter,
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+        onDispose {
+            context.unregisterReceiver(scanReceiver)
+        }
+    }
+    var libraryUpdateKey by remember { mutableStateOf(0) }
+    // val context = LocalContext.current (Removed duplicate)
 
     LaunchedEffect(libraryUpdateKey) {
         songList = loadLibraryFromFile(context) ?: emptyList()
@@ -644,6 +704,8 @@ fun MusicPlayerScreen(
     val currentPlayNext by rememberUpdatedState(playNext)
     val currentMusicService by rememberUpdatedState(musicService)
     val currentIsPlaying by rememberUpdatedState(isPlaying)
+
+
 
     // 2. 通知からのアクション受信とクリーンアップ
     DisposableEffect(Unit) {
@@ -1560,28 +1622,23 @@ fun SettingsScreen(
         contract = ActivityResultContracts.OpenDocumentTree(),
         onResult = { treeUri: Uri? ->
             treeUri?.let { uri ->
-                isScanning = true
-                scanProgress = 0f
-                coroutineScope.launch {
+                // 権限永続化
+                try {
                     context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                } catch (e: Exception) { e.printStackTrace() }
+                
+                // フォルダリスト保存
+                coroutineScope.launch {
                     val currentFolders = getUriList(context, KEY_SOURCE_FOLDER_URIS).toMutableSet()
                     currentFolders.add(uri)
                     saveUriList(context, KEY_SOURCE_FOLDER_URIS, currentFolders.toList())
-                    sourceFolders = currentFolders.toList()
-
-                    val totalFiles = countFilesInDirectory(context, uri)
-                    val newSongs = getAudioFilesFromDirectory(context, uri, totalFiles) { progress ->
-                        launch(Dispatchers.Main) { 
-                            scanProgress = progress
-                            scanCount = (progress * totalFiles).toInt()
-                        }
-                    }
-                    val existingSongs = loadLibraryFromFile(context) ?: emptyList()
-                    val combinedSongs = (existingSongs + newSongs).distinctBy { it.uri }
-                    saveLibraryToFile(context, combinedSongs)
-                    isScanning = false
+                    sourceFolders = currentFolders.toList() // UI更新
+                    
+                    // スキャン開始 (Service)
+                    startScanServiceHelper(context, listOf(uri))
+                    
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(context, "${newSongs.size} 曲が追加されました", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "バックグラウンドでスキャンを開始しました", Toast.LENGTH_SHORT).show()
                     }
                 }
             }
