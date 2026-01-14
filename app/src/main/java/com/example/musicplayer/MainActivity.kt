@@ -102,9 +102,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.1.15: スクロールバー不具合修正（ドラッグ位置の計算ミス修正）
-private const val APP_VERSION = "v2.1.15"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v51"
+// v2.1.16: スクロールバー完全修正（タッチ位置からの相対移動）
+private const val APP_VERSION = "v2.1.16"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v52"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -2588,7 +2588,6 @@ fun VerticalScrollbar(
     minThumbHeight: Dp = 48.dp
 ) {
     val coroutineScope = rememberCoroutineScope()
-    val density = LocalDensity.current
     
     val layoutInfo = listState.layoutInfo
     val totalItemsCount = layoutInfo.totalItemsCount
@@ -2601,92 +2600,53 @@ fun VerticalScrollbar(
         modifier = modifier.width(thumbWidth * 4) // タッチ領域を確保
     ) {
         val barHeight = maxHeight
+        val barHeightPx = with(LocalDensity.current) { barHeight.toPx() }
         
-        // 正確なスクロール進捗の計算
-        val firstVisibleItemIndex = listState.firstVisibleItemIndex
-        val firstVisibleItemScrollOffset = listState.firstVisibleItemScrollOffset
-        
-        // 平均アイテム高さを計算（可変長リストに対応）
-        val avgItemHeight = if (visibleItemsInfo.isNotEmpty()) {
-            visibleItemsInfo.sumOf { it.size } / visibleItemsInfo.size.toFloat()
-        } else 0f
-        
-        val offsetInItem = if (avgItemHeight > 0) firstVisibleItemScrollOffset.toFloat() / avgItemHeight else 0f
-        val accurateCurrentIndex = firstVisibleItemIndex + offsetInItem
-        val scrollProgress = (accurateCurrentIndex / totalItemsCount.toFloat()).coerceIn(0f, 1f)
-
+        // つまみのサイズ計算
         val scrollWindowSize = visibleItemsInfo.size.toFloat() / totalItemsCount.toFloat()
         val thumbHeight = (barHeight * scrollWindowSize).coerceAtLeast(minThumbHeight)
-        val scrollableHeight = barHeight - thumbHeight
+        val thumbHeightPx = with(LocalDensity.current) { thumbHeight.toPx() }
+        val scrollableHeightPx = barHeightPx - thumbHeightPx
         
-        val thumbOffset = scrollableHeight * scrollProgress
+        // 現在のスクロール進捗（表示用）
+        val firstVisibleItemIndex = listState.firstVisibleItemIndex
+        val scrollProgress = (firstVisibleItemIndex.toFloat() / (totalItemsCount - visibleItemsInfo.size).coerceAtLeast(1)).coerceIn(0f, 1f)
+        val thumbOffset = with(LocalDensity.current) { (scrollableHeightPx * scrollProgress).toDp() }
         
         // タッチ操作を受け付ける透明なBox
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(totalItemsCount, barHeight) {
-                    var dragOffset = 0f // つまみ内のタップ位置オフセット
+                .pointerInput(totalItemsCount) {
+                    // ドラッグ開始時のタッチY座標を記録
+                    var startTouchY = 0f
+                    // ドラッグ開始時のスクロール位置（アイテムインデックス）を記録
+                    var startScrollIndex = 0
                     
                     detectVerticalDragGestures(
                         onDragStart = { offset ->
-                            val barHeightPx = size.height.toFloat()
-                            val thumbHeightPx = thumbHeight.toPx()
-                            val scrollableHeightPx = barHeightPx - thumbHeightPx
-                            
-                            // 現在のつまみ位置を再計算（タッチ時点の最新状態をlistStateから直接取得）
-                            // pointerInputのキャプチャ変数ではなく、最新のlayoutInfoを使用する
-                            val currentLayoutInfo = listState.layoutInfo
-                            val currentVisibleItems = currentLayoutInfo.visibleItemsInfo
-                            val currentTotalItems = currentLayoutInfo.totalItemsCount
-                            
-                            val currentFirstIndex = listState.firstVisibleItemIndex
-                            val currentFirstOffset = listState.firstVisibleItemScrollOffset
-                            
-                            val currentAvgItemHeight = if (currentVisibleItems.isNotEmpty()) {
-                                currentVisibleItems.sumOf { it.size } / currentVisibleItems.size.toFloat()
-                            } else 1f
-                            
-                            val currentOffsetInItem = currentFirstOffset.toFloat() / currentAvgItemHeight
-                            val currentAccurateIndex = currentFirstIndex + currentOffsetInItem
-                            
-                            // currentTotalItemsを使用（0除算回避）
-                            val totalForCalc = if (currentTotalItems > 0) currentTotalItems else 1
-                            val currentProgressCaptured = (currentAccurateIndex / totalForCalc.toFloat()).coerceIn(0f, 1f)
-                            
-                            val currentThumbY = scrollableHeightPx * currentProgressCaptured
-                            
-                            // つまみをタップしたかどうか判定
-                            if (offset.y >= currentThumbY && offset.y <= currentThumbY + thumbHeightPx) {
-                                // つまみを掴んだ：現在のオフセットを記憶
-                                dragOffset = offset.y - currentThumbY
-                            } else {
-                                // つまみ以外（トラックバー）をタップ：中心にジャンプ
-                                dragOffset = thumbHeightPx / 2
-                                if (scrollableHeightPx > 0) {
-                                    val targetThumbY = offset.y - dragOffset
-                                    val newProgress = (targetThumbY / scrollableHeightPx).coerceIn(0f, 1f)
-                                    val targetIndex = (newProgress * totalItemsCount).toInt()
-                                    coroutineScope.launch {
-                                        listState.scrollToItem(targetIndex)
-                                    }
-                                }
-                            }
+                            // タッチ開始位置と現在のスクロール位置を記録
+                            startTouchY = offset.y
+                            startScrollIndex = listState.firstVisibleItemIndex
                         },
                         onVerticalDrag = { change, _ ->
                             change.consume()
-                            val barHeightPx = size.height.toFloat()
-                            val thumbHeightPx = thumbHeight.toPx()
-                            val scrollableHeightPx = barHeightPx - thumbHeightPx
                             
-                            if (scrollableHeightPx > 0) {
-                                // 記憶したオフセットを使って目標位置を計算
-                                val targetThumbY = change.position.y - dragOffset
-                                val newProgress = (targetThumbY / scrollableHeightPx).coerceIn(0f, 1f)
-                                val targetIndex = (newProgress * totalItemsCount).toInt()
-                                coroutineScope.launch {
-                                    listState.scrollToItem(targetIndex)
-                                }
+                            // ドラッグ量（ピクセル）
+                            val dragDelta = change.position.y - startTouchY
+                            
+                            // 1ピクセルあたりのアイテム数を計算
+                            // バー全体をドラッグすると全アイテムをスクロールする
+                            val itemsPerPixel = totalItemsCount.toFloat() / barHeightPx
+                            
+                            // ドラッグ量をアイテム数に変換
+                            val itemDelta = (dragDelta * itemsPerPixel).toInt()
+                            
+                            // 新しいスクロール位置を計算
+                            val newIndex = (startScrollIndex + itemDelta).coerceIn(0, totalItemsCount - 1)
+                            
+                            coroutineScope.launch {
+                                listState.scrollToItem(newIndex)
                             }
                         }
                     )
