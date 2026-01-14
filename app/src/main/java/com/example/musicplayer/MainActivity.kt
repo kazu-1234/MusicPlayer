@@ -495,15 +495,15 @@ fun MusicPlayerScreen(
     // --- Service経由の再生制御関数 (v2.4.0) ---
     
     // 曲を再生（タップ時用）
-    val playSong: (Song, List<Song>) -> Unit = playSong@{ song, contextList ->
+    val playSong: (Song, List<Song>) -> Unit = { song, contextList ->
         if (!song.exists) {
             Toast.makeText(context, "ファイルが見つかりません", Toast.LENGTH_SHORT).show()
-            return@playSong
-        }
-        originalQueue = contextList
-        musicService?.let { svc ->
-            svc.isShuffleEnabled = isShuffleEnabled
-            svc.playSong(song, contextList)
+        } else {
+            originalQueue = contextList
+            musicService?.let { svc ->
+                svc.isShuffleEnabled = isShuffleEnabled
+                svc.playSong(song, contextList)
+            }
         }
     }
     
