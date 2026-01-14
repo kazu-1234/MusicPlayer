@@ -102,9 +102,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.4.0: Foreground Serviceによるバックグラウンド再生対応
-private const val APP_VERSION = "v2.4.0"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v61"
+// v2.4.1: Android 14でのクラッシュ修正 (Foreground Service Type)
+private const val APP_VERSION = "v2.4.1"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-15 v62"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }

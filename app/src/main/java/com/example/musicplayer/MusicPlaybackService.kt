@@ -16,6 +16,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
+import android.content.pm.ServiceInfo
 
 /**
  * 音楽再生用Foreground Service
@@ -185,10 +186,20 @@ class MusicPlaybackService : Service() {
         )
     }
     
+
+
     // --- Foreground開始 ---
     private fun startForegroundService() {
         val notification = createNotification()
-        startForeground(NOTIFICATION_ID, notification)
+        if (Build.VERSION.SDK_INT >= 34) { // Android 14+
+            startForeground(
+                NOTIFICATION_ID, 
+                notification, 
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
     }
     
     // --- 通知更新 ---
