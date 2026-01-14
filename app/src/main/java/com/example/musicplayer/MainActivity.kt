@@ -102,9 +102,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.3.1: ボタン配置改善（スクロールと一緒に動く）
-private const val APP_VERSION = "v2.3.1"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v60"
+// v2.4.0: Foreground Serviceによるバックグラウンド再生対応
+private const val APP_VERSION = "v2.4.0"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v61"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -409,15 +409,18 @@ fun MusicPlayerScreen(
     var scanCount by remember { mutableStateOf(0) }
     var scanTotal by remember { mutableStateOf(0) } // 推定合計
     
-    // 再生状態
+    // --- Service連携 (v2.4.0) ---
+    var musicService by remember { mutableStateOf<MusicPlaybackService?>(null) }
+    var isBound by remember { mutableStateOf(false) }
+    
+    // 再生状態（Serviceから同期）
     var currentSong by remember { mutableStateOf<Song?>(null) }
     var currentIndex by remember { mutableStateOf(-1) }
-    var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
+    var currentPosition by remember { mutableStateOf(0) }
+    var duration by remember { mutableStateOf(0) }
     
-    // 再生キュー管理 (v2.0.9)
-    // playingQueue: 現在再生用（シャッフルまたは手動並び替え後）
-    // originalQueue: シャッフルOFF時の復帰用（元のコンテキスト順序）
+    // 再生キュー管理
     var playingQueue by remember { mutableStateOf<List<Song>>(emptyList()) }
     var originalQueue by remember { mutableStateOf<List<Song>>(emptyList()) }
     
@@ -425,9 +428,60 @@ fun MusicPlayerScreen(
     var repeatMode by remember { mutableStateOf(RepeatMode.OFF) }
     var isShuffleEnabled by remember { mutableStateOf(false) }
     
-    // プログレスバー
-    var currentPosition by remember { mutableStateOf(0) }
-    var duration by remember { mutableStateOf(0) }
+    // ServiceConnection
+    val serviceConnection = remember {
+        object : android.content.ServiceConnection {
+            override fun onServiceConnected(name: android.content.ComponentName?, service: android.os.IBinder?) {
+                val binder = service as MusicPlaybackService.LocalBinder
+                musicService = binder.getService().also { svc ->
+                    // コールバック設定
+                    svc.onPlaybackStateChanged = { playing -> isPlaying = playing }
+                    svc.onSongChanged = { song -> currentSong = song }
+                    svc.onPositionChanged = { pos, dur -> 
+                        currentPosition = pos
+                        duration = dur
+                    }
+                    svc.onQueueChanged = { queue -> playingQueue = queue }
+                    svc.onPlayCountUpdated = { song ->
+                        songList.indexOf(songList.find { it.uri == song.uri }).takeIf { it != -1 }?.let { idx ->
+                            val updatedSong = songList[idx].copy(playCount = songList[idx].playCount + 1)
+                            val updatedList = songList.toMutableList().also { it[idx] = updatedSong }
+                            onSongListChange(updatedList)
+                            currentSong = updatedSong
+                            coroutineScope.launch { saveLibraryToFile(context, updatedList) }
+                        }
+                    }
+                    
+                    // 現在の状態を同期
+                    isPlaying = svc.isPlaying
+                    currentSong = svc.currentSong
+                    currentIndex = svc.currentIndex
+                    playingQueue = svc.playingQueue
+                    repeatMode = svc.repeatMode
+                    isShuffleEnabled = svc.isShuffleEnabled
+                }
+                isBound = true
+            }
+            
+            override fun onServiceDisconnected(name: android.content.ComponentName?) {
+                musicService = null
+                isBound = false
+            }
+        }
+    }
+    
+    // Service起動・バインド
+    DisposableEffect(Unit) {
+        val intent = Intent(context, MusicPlaybackService::class.java)
+        context.startService(intent)
+        context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        
+        onDispose {
+            if (isBound) {
+                context.unbindService(serviceConnection)
+            }
+        }
+    }
     
     // フルスクリーンプレイヤー表示
     var showFullPlayer by remember { mutableStateOf(false) }
@@ -438,137 +492,35 @@ fun MusicPlayerScreen(
     var sortOrder by remember { mutableStateOf(SortOrder.ASC) }
     var tabOrder by remember { mutableStateOf(getTabOrder(context)) }
     
-    // プログレスバー更新用（滑らかな動きのため200ms間隔）
-    LaunchedEffect(isPlaying, mediaPlayer) {
-        while (isPlaying && mediaPlayer != null) {
-            currentPosition = mediaPlayer?.currentPosition ?: 0
-            duration = mediaPlayer?.duration ?: 0
-            kotlinx.coroutines.delay(200) // 200ms間隔で滑らかに更新
-        }
-    }
+    // --- Service経由の再生制御関数 (v2.4.0) ---
     
-    // 次に再生するインデックスを保持（曲終了時にトリガー）
-    var pendingPlayIndex by remember { mutableStateOf<Int?>(null) }
-    
-    // 曲を再生する関数
-    fun playSongAtIndex(index: Int, queue: List<Song>) {
-        if (index >= 0 && index < queue.size) {
-            val song = queue[index]
-            if (!song.exists) {
-                Toast.makeText(context, "ファイルが見つかりません", Toast.LENGTH_SHORT).show()
-                return
-            }
-            currentIndex = index
-            currentSong = song
-            playingQueue = queue
-            mediaPlayer?.release()
-            mediaPlayer = MediaPlayer.create(context, song.uri)?.apply {
-                start()
-                setOnCompletionListener {
-                    // 曲終了時の処理
-                    when (repeatMode) {
-                        RepeatMode.ONE -> {
-                            seekTo(0)
-                            start()
-                        }
-                        RepeatMode.ALL -> {
-                            // キューの最後なら最初へ
-                            val nextIdx = if (currentIndex + 1 >= playingQueue.size) 0 else currentIndex + 1
-                            playSongAtIndex(nextIdx, playingQueue)
-                        }
-                        RepeatMode.OFF -> {
-                            if (currentIndex + 1 < playingQueue.size) {
-                                playSongAtIndex(currentIndex + 1, playingQueue)
-                            } else {
-                                isPlaying = false
-                            }
-                        }
-                    }
-                }
-            }
-            isPlaying = true
-            duration = mediaPlayer?.duration ?: 0
-            currentPosition = 0
-            
-            // 再生回数を更新
-            songList.indexOf(song).takeIf { it != -1 }?.let { idx ->
-                val updatedSong = song.copy(playCount = song.playCount + 1)
-                val updatedList = songList.toMutableList().also { it[idx] = updatedSong }
-                onSongListChange(updatedList)
-                currentSong = updatedSong
-                coroutineScope.launch { saveLibraryToFile(context, updatedList) }
-            }
-        }
-    }
-    
-    // pendingPlayIndexが設定されたら次の曲を再生
-    LaunchedEffect(pendingPlayIndex) {
-        pendingPlayIndex?.let { idx ->
-            playSongAtIndex(idx, playingQueue)
-            pendingPlayIndex = null
-        }
-    }
-    
-    // シンプルな再生関数（タップ時用）- コンテキスト（リスト）を受け取るように変更
+    // 曲を再生（タップ時用）
     val playSong: (Song, List<Song>) -> Unit = { song, contextList ->
-        // 1. 元のキューを保存
+        if (!song.exists) {
+            Toast.makeText(context, "ファイルが見つかりません", Toast.LENGTH_SHORT).show()
+            return@Unit
+        }
         originalQueue = contextList
-        
-        // 2. シャッフル有効かどうかで初期キューを決定
-        val queue = if (isShuffleEnabled) {
-            // 現在の曲 + 残りの曲をシャッフル
-            val remainder = contextList.filter { it.uri != song.uri }.shuffled()
-            listOf(song) + remainder
-        } else {
-            contextList
+        musicService?.let { svc ->
+            svc.isShuffleEnabled = isShuffleEnabled
+            svc.playSong(song, contextList)
         }
-        
-        // 3. 再生開始
-        val index = queue.indexOfFirst { it.uri == song.uri }.takeIf { it != -1 } ?: 0
-        playSongAtIndex(index, queue)
     }
-
-    // シャッフル切り替え時のロジック (LaunchedEffectで監視、またはToggleActionで実行)
-    // ユーザー要望: ボタンを押すたびに「現在の曲の次以降」をシャッフル
+    
+    // シャッフル切り替え
     val toggleShuffle: () -> Unit = {
-        val newShuffleState = !isShuffleEnabled
-        isShuffleEnabled = newShuffleState
-        
-        if (currentSong != null && originalQueue.isNotEmpty()) {
-            if (newShuffleState) {
-                // OFF -> ON: 現在の曲の次以降をシャッフル
-                val remainder = originalQueue.filter { it.uri != currentSong!!.uri }.shuffled()
-                val newQueue = listOf(currentSong!!) + remainder
-                playingQueue = newQueue
-                currentIndex = 0 // 先頭は現在の曲
-            } else {
-                // ON -> OFF: 元の順序に戻す
-                playingQueue = originalQueue
-                // 現在の曲の位置を探し直す
-                val idx = originalQueue.indexOfFirst { it.uri == currentSong!!.uri }
-                if (idx != -1) {
-                    currentIndex = idx
-                }
-            }
-        }
+        isShuffleEnabled = !isShuffleEnabled
+        musicService?.toggleShuffle()
     }
     
     // 前の曲
     val playPrevious: () -> Unit = {
-        if (playingQueue.isNotEmpty() && currentIndex > 0) {
-            playSongAtIndex(currentIndex - 1, playingQueue)
-        } else if (playingQueue.isNotEmpty() && repeatMode == RepeatMode.ALL) {
-            playSongAtIndex(playingQueue.size - 1, playingQueue)
-        }
+        musicService?.playPrevious()
     }
     
     // 次の曲
     val playNext: () -> Unit = {
-        if (playingQueue.isNotEmpty() && currentIndex < playingQueue.size - 1) {
-            playSongAtIndex(currentIndex + 1, playingQueue)
-        } else if (playingQueue.isNotEmpty() && repeatMode == RepeatMode.ALL) {
-            playSongAtIndex(0, playingQueue)
-        }
+        musicService?.playNext()
     }
 
     // --- 通知連携 ---
@@ -582,7 +534,7 @@ fun MusicPlayerScreen(
     // 関数参照をrememberUpdatedStateで保持（Recomposition時の参照無効化を防止）
     val currentPlayPrevious by rememberUpdatedState(playPrevious)
     val currentPlayNext by rememberUpdatedState(playNext)
-    val currentMediaPlayer by rememberUpdatedState(mediaPlayer)
+    val currentMusicService by rememberUpdatedState(musicService)
     val currentIsPlaying by rememberUpdatedState(isPlaying)
 
     // 2. 通知からのアクション受信とクリーンアップ
@@ -606,11 +558,9 @@ fun MusicPlayerScreen(
                         ACTION_NEXT -> currentPlayNext()
                         ACTION_PLAY_PAUSE -> {
                             if (currentIsPlaying) {
-                                currentMediaPlayer?.pause()
-                                isPlaying = false
+                                currentMusicService?.pause()
                             } else {
-                                currentMediaPlayer?.start()
-                                isPlaying = true
+                                currentMusicService?.resume()
                             }
                         }
                         ACTION_SHUFFLE -> { toggleShuffle() }
@@ -620,12 +570,11 @@ fun MusicPlayerScreen(
                                 RepeatMode.ALL -> RepeatMode.ONE
                                 RepeatMode.ONE -> RepeatMode.OFF
                             }
+                            currentMusicService?.repeatMode = repeatMode
                         }
                         ACTION_STOP -> {
-                            // アプリを完全に終了
-                            currentMediaPlayer?.stop()
-                            currentMediaPlayer?.release()
-                            mediaPlayer = null
+                            // Serviceを停止してアプリを終了
+                            currentMusicService?.stop()
                             // 通知をキャンセル
                             val notificationManager = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                             notificationManager.cancel(NOTIFICATION_ID)
@@ -634,7 +583,7 @@ fun MusicPlayerScreen(
                         }
                         ACTION_SEEK -> {
                             val pos = intent.getLongExtra(EXTRA_SEEK_POS, 0L)
-                            currentMediaPlayer?.seekTo(pos.toInt())
+                            currentMusicService?.seekTo(pos.toInt())
                             currentPosition = pos.toInt()
                         }
                         MusicScanService.ACTION_SCAN_PROGRESS -> {
@@ -690,8 +639,7 @@ fun MusicPlayerScreen(
             } catch (e: Exception) {
                 // 既に登録解除済みの場合は無視
             }
-            mediaPlayer?.release()
-            mediaPlayer = null
+            // Serviceへの参照解除はServiceConnection側で処理
         }
     }
     
@@ -751,8 +699,7 @@ fun MusicPlayerScreen(
                         repeatMode = repeatMode,
                         onPrevious = playPrevious,
                         onPlayPause = {
-                            if (isPlaying) mediaPlayer?.pause() else mediaPlayer?.start()
-                            isPlaying = !isPlaying
+                            if (isPlaying) musicService?.pause() else musicService?.resume()
                         },
                         onNext = playNext,
                         onShuffleToggle = { toggleShuffle() },
@@ -813,14 +760,13 @@ fun MusicPlayerScreen(
                     isShuffleEnabled = isShuffleEnabled,
                     playingQueue = playingQueue,
                     onPlayPause = {
-                        if (isPlaying) mediaPlayer?.pause() else mediaPlayer?.start()
-                        isPlaying = !isPlaying
+                        if (isPlaying) musicService?.pause() else musicService?.resume()
                     },
                     onPrevious = playPrevious,
                     onNext = playNext,
                     onSeek = { newValue ->
                         currentPosition = newValue.toInt()
-                        mediaPlayer?.seekTo(newValue.toInt())
+                        musicService?.seekTo(newValue.toInt())
                     },
                     onRepeatToggle = {
                         repeatMode = when (repeatMode) {

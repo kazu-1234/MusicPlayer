@@ -38,6 +38,12 @@
             </intent-filter>
         </activity>
         
+        <!-- 音楽再生用Foreground Service -->
+        <service
+            android:name=".MusicPlaybackService"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        
         <!-- 音楽再生通知用BroadcastReceiver -->
         <receiver 
             android:name=".MusicNotificationReceiver"
