@@ -440,12 +440,21 @@ class MusicPlaybackService : Service() {
     
     private fun startPositionUpdates() {
         positionUpdateThread?.interrupt()
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
         positionUpdateThread = Thread {
             try {
                 while (isPlaying && !Thread.interrupted()) {
-                    val position = mediaPlayer?.currentPosition ?: 0
-                    val dur = mediaPlayer?.duration ?: 0
-                    onPositionChanged?.invoke(position, dur)
+                    // MediaPlayerへのアクセスも競合の可能性があるため、必要ならここで同期化するが
+                    // 単純なgetなのでtry-catchで囲んでおくのが無難
+                    try {
+                        val position = mediaPlayer?.currentPosition ?: 0
+                        val dur = mediaPlayer?.duration ?: 0
+                        handler.post {
+                            onPositionChanged?.invoke(position, dur)
+                        }
+                    } catch (e: Exception) {
+                        // MediaPlayerが解放されている場合など
+                    }
                     Thread.sleep(200)
                 }
             } catch (e: InterruptedException) {

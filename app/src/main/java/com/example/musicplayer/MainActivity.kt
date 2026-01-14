@@ -102,9 +102,27 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.4.3: スリープ時の通知操作修正 (Cycle Cleanup)
-private const val APP_VERSION = "v2.4.3"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-15 v64"
+// v2.4.5: アルバムアートキャッシュ & バックグラウンド安定化
+private const val APP_VERSION = "v2.4.5"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-15 v66"
+
+// --- アルバムアートキャッシュ (v2.4.5) ---
+object AlbumArtCache {
+    private val maxMemory = (Runtime.getRuntime().maxMemory() / 1024).toInt()
+    private val cacheSize = maxMemory / 8 // メモリの1/8を使用
+    private val memoryCache = object : android.util.LruCache<String, android.graphics.Bitmap>(cacheSize) {
+        override fun sizeOf(key: String, bitmap: android.graphics.Bitmap): Int {
+            return bitmap.byteCount / 1024 // KB単位
+        }
+    }
+
+    fun get(key: String): android.graphics.Bitmap? = memoryCache.get(key)
+    fun put(key: String, bitmap: android.graphics.Bitmap) {
+        if (get(key) == null) {
+            memoryCache.put(key, bitmap)
+        }
+    }
+}
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -2135,21 +2153,32 @@ fun SongListItem(song: Song, isCurrentlyPlaying: Boolean, onSongClick: (Song) ->
     val context = LocalContext.current
     
     // アルバムアートを非同期で取得
-    var albumArtBitmap by remember(song.uri) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    // アルバムアートを非同期で取得 (キャッシュ対応 v2.4.5)
+    var albumArtBitmap by remember(song.uri) { mutableStateOf<android.graphics.Bitmap?>(AlbumArtCache.get(song.uri.toString())) }
     LaunchedEffect(song.uri) {
-        withContext(Dispatchers.IO) {
-            try {
-                val retriever = MediaMetadataRetriever()
-                context.contentResolver.openFileDescriptor(song.uri, "r")?.use { pfd ->
-                    retriever.setDataSource(pfd.fileDescriptor)
-                    val art = retriever.embeddedPicture
-                    if (art != null) {
-                        albumArtBitmap = android.graphics.BitmapFactory.decodeByteArray(art, 0, art.size)
+        if (albumArtBitmap == null) {
+            withContext(Dispatchers.IO) {
+                try {
+                    // キャッシュ再確認
+                    val cached = AlbumArtCache.get(song.uri.toString())
+                    if (cached != null) {
+                        albumArtBitmap = cached
+                    } else {
+                        val retriever = MediaMetadataRetriever()
+                        context.contentResolver.openFileDescriptor(song.uri, "r")?.use { pfd ->
+                            retriever.setDataSource(pfd.fileDescriptor)
+                            val art = retriever.embeddedPicture
+                            if (art != null) {
+                                val bitmap = android.graphics.BitmapFactory.decodeByteArray(art, 0, art.size)
+                                AlbumArtCache.put(song.uri.toString(), bitmap)
+                                albumArtBitmap = bitmap
+                            }
+                        }
+                        retriever.release()
                     }
+                } catch (e: Exception) {
+                    // アート取得失敗は無視
                 }
-                retriever.release()
-            } catch (e: Exception) {
-                // アート取得失敗は無視
             }
         }
     }
