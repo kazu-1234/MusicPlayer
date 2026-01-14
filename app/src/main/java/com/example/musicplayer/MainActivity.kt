@@ -105,9 +105,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.5.0: 永続キャッシュ & UI改善 & 検索機能
-private const val APP_VERSION = "v2.5.0"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-15 v68"
+// v2.5.1: UI配置改善 & タブ遷移連携 & 文字化け修正
+private const val APP_VERSION = "v2.5.1"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-15 v69"
 
 // --- アルバムアートキャッシュ (v2.5.0: 永続化対応) ---
 object AlbumArtCache {
@@ -939,13 +939,15 @@ fun MusicPlayerScreen(
                     onArtistClick = { artist ->
                         isSearchActive = true
                         searchQuery = artist
-                        selectedTabIndex = 0 // Songsタブへ移動
+                        val index = tabOrder.indexOf(TabType.ARTISTS)
+                        selectedTabIndex = if (index >= 0) index else 0
                         showFullPlayer = false
                     },
                     onAlbumClick = { album ->
                         isSearchActive = true
                         searchQuery = album
-                        selectedTabIndex = 0 // Songsタブへ移動
+                        val index = tabOrder.indexOf(TabType.ALBUMS)
+                        selectedTabIndex = if (index >= 0) index else 0
                         showFullPlayer = false
                     }
                 )
@@ -1376,27 +1378,34 @@ fun FullScreenPlayer(
                 overflow = TextOverflow.Ellipsis
             )
             
-            // アーティスト名
-            Text(
-                currentSong.artist,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.primary,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.clickable { onArtistClick(currentSong.artist) }
-            )
-            
-            // アルバム名 (追加: v2.5.0)
-            Text(
-                currentSong.album,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.clickable { onAlbumClick(currentSong.album) }
-            )
+            // アーティスト名 - アルバム名 (v2.5.1)
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    currentSong.artist,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false).clickable { onArtistClick(currentSong.artist) }
+                )
+                Text(
+                    " - ",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    currentSong.album,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false).clickable { onAlbumClick(currentSong.album) }
+                )
+            }
             
             Spacer(modifier = Modifier.height(24.dp))
             
@@ -2648,29 +2657,32 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
     // 文字化け検出関数
     fun isGarbled(s: String?): Boolean {
         if (s == null) return false
-        
-        // 1. U+FFFD (置換文字) を含む場合は確実に文字化け
         if (s.contains('\uFFFD')) return true
-        
-        // 2. 制御文字 (C0: 00-1F, DEL: 7F, C1: 80-9F) を含む場合は文字化けとみなす
-        // Shift-JISの2バイト文字がLatin-1として解釈されると、0x80-0x9Fの範囲(C1制御文字)になることが多い
-        // 例: '～' (0x8160) -> \u0081 (C1) + ` (Backtick)
-        // ただし、タブ(\t), 改行(\n, \r)は許可する
         if (s.any { 
             val c = it.code
-            (c < 32 && c != 9 && c != 10 && c != 13) || // C0 control (excluding tab, LF, CR)
-            (c == 0x7F) ||                              // DEL
-            (c in 0x80..0x9F)                           // C1 control (Shift-JIS corruption often lands here)
+            (c < 32 && c != 9 && c != 10 && c != 13) || 
+            (c == 0x7F) || 
+            (c in 0x80..0x9F) 
         }) return true
-        
-        // 3. Win-1252文字化け判定: 
-        // 頻出する文字化け記号が含まれており、かつ日本語が含まれていない場合は文字化けとみなす
-        val japaneseChars = s.any { it.code in 0x3040..0x30FF || it.code in 0x4E00..0x9FFF } // ひらがな・カタカナ・漢字
+        val japaneseChars = s.any { it.code in 0x3040..0x30FF || it.code in 0x4E00..0x9FFF }
         if (japaneseChars) return false
-
         val mojibakeChars = "‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ¡¢£¤¥¦§¨©ª«¬®¯°±²³´µ¶·¸¹º»¼½¾¿ÃÅÆÇÈÉÊËÌÍÎÏ"
         val mojibakeCount = s.count { it in mojibakeChars }
         return s.length > 0 && mojibakeCount.toFloat() / s.length.toFloat() > 0.3f
+    }
+
+    // 文字化け修復関数 (Latin-1 to Shift_JIS) (v2.5.1)
+    fun fixEncoding(original: String?): String? {
+        if (original == null) return null
+        try {
+            val bytes = original.toByteArray(Charsets.ISO_8859_1)
+            val sjis = String(bytes, java.nio.charset.Charset.forName("Shift_JIS"))
+            val originalJpCount = original.count { it.code in 0x3040..0x30FF || it.code in 0x4E00..0x9FFF }
+            val sjisJpCount = sjis.count { it.code in 0x3040..0x30FF || it.code in 0x4E00..0x9FFF }
+            // SJIS変換で日本語が増えれば採用
+            if (sjisJpCount > originalJpCount) return sjis
+        } catch (e: Exception) {}
+        return original
     }
 
     // 再帰的にディレクトリを探索する関数
@@ -2711,10 +2723,14 @@ private suspend fun getAudioFilesFromDirectory(context: Context, directoryUri: U
                                     val extractedArtist = localRetriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
                                     val extractedAlbum = localRetriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
                                     
-                                    songTitle = if (isGarbled(extractedTitle)) songTitle else (extractedTitle ?: songTitle)
-                                    songArtist = if (isGarbled(extractedArtist)) "Unknown Artist" else (extractedArtist ?: "Unknown Artist")
+                                    val fixedTitle = fixEncoding(extractedTitle)
+                                    val fixedArtist = fixEncoding(extractedArtist)
+                                    val fixedAlbum = fixEncoding(extractedAlbum)
+                                    
+                                    songTitle = if (isGarbled(fixedTitle)) songTitle else (fixedTitle ?: songTitle)
+                                    songArtist = if (isGarbled(fixedArtist)) "Unknown Artist" else (fixedArtist ?: "Unknown Artist")
                                     // アルバム名が文字化けまたは空の場合は親フォルダ名を使用
-                                    songAlbum = if (isGarbled(extractedAlbum)) parentName else (extractedAlbum ?: parentName)
+                                    songAlbum = if (isGarbled(fixedAlbum)) parentName else (fixedAlbum ?: parentName)
                                     
                                     val trackString = localRetriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
                                     trackNumber = trackString?.substringBefore("/")?.toIntOrNull() ?: 0
