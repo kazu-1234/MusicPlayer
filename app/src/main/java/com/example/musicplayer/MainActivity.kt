@@ -102,9 +102,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.1.12: スクロールバー操作性改善＆文字化け対策強化
-private const val APP_VERSION = "v2.1.12"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v45"
+// v2.1.13: スクロールバー操作改善（Grab & Drag対応）
+private const val APP_VERSION = "v2.1.13"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v46"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -2565,6 +2565,14 @@ private fun downloadAndInstallApk(context: Context, url: String) {
     }
 }
 
+// --- アプリ情報 ---
+// v2.1.14: スクロールバー精度向上（位置ズレ修正）
+private const val APP_VERSION = "v2.1.14"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v50"
+
+// --- データ構造の定義 ---
+enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
+
 @Preview(showBackground = true)
 @Composable
 fun DefaultPreview() {
@@ -2585,6 +2593,7 @@ fun VerticalScrollbar(
     minThumbHeight: Dp = 48.dp
 ) {
     val coroutineScope = rememberCoroutineScope()
+    val density = LocalDensity.current
     
     val layoutInfo = listState.layoutInfo
     val totalItemsCount = layoutInfo.totalItemsCount
@@ -2597,14 +2606,23 @@ fun VerticalScrollbar(
         modifier = modifier.width(thumbWidth * 4) // タッチ領域を確保
     ) {
         val barHeight = maxHeight
-        val scrollWindowSize = visibleItemsInfo.size.toFloat() / totalItemsCount.toFloat()
         
+        // 正確なスクロール進捗の計算
+        val firstVisibleItemIndex = listState.firstVisibleItemIndex
+        val firstVisibleItemScrollOffset = listState.firstVisibleItemScrollOffset
+        
+        // 平均アイテム高さを計算（可変長リストに対応）
+        val avgItemHeight = if (visibleItemsInfo.isNotEmpty()) {
+            visibleItemsInfo.sumOf { it.size } / visibleItemsInfo.size.toFloat()
+        } else 0f
+        
+        val offsetInItem = if (avgItemHeight > 0) firstVisibleItemScrollOffset.toFloat() / avgItemHeight else 0f
+        val accurateCurrentIndex = firstVisibleItemIndex + offsetInItem
+        val scrollProgress = (accurateCurrentIndex / totalItemsCount.toFloat()).coerceIn(0f, 1f)
+
+        val scrollWindowSize = visibleItemsInfo.size.toFloat() / totalItemsCount.toFloat()
         val thumbHeight = (barHeight * scrollWindowSize).coerceAtLeast(minThumbHeight)
         val scrollableHeight = barHeight - thumbHeight
-        
-        val firstVisibleItemIndex = listState.firstVisibleItemIndex
-        val maxScrollIndex = (totalItemsCount - visibleItemsInfo.size).coerceAtLeast(1)
-        val scrollProgress = (firstVisibleItemIndex.toFloat() / maxScrollIndex.toFloat()).coerceIn(0f, 1f)
         
         val thumbOffset = scrollableHeight * scrollProgress
         
@@ -2613,38 +2631,63 @@ fun VerticalScrollbar(
             modifier = Modifier
                 .fillMaxSize()
                 .pointerInput(totalItemsCount, barHeight) {
-                detectVerticalDragGestures(
-                    onDragStart = { offset ->
-                        // タップ/ドラッグ開始位置へジャンプ
-                        // 指の位置がバー（つまみ）の中心に来るように計算
-                        val barHeightPx = size.height.toFloat()
-                        val thumbHeightPx = thumbHeight.toPx()
-                        val scrollableHeightPx = barHeightPx - thumbHeightPx
-                        
-                        if (scrollableHeightPx > 0) {
-                            val progress = ((offset.y - thumbHeightPx / 2) / scrollableHeightPx).coerceIn(0f, 1f)
-                            val targetIndex = (progress * totalItemsCount).toInt()
-                            coroutineScope.launch {
-                                listState.scrollToItem(targetIndex)
+                    var dragOffset = 0f // つまみ内のタップ位置オフセット
+                    
+                    detectVerticalDragGestures(
+                        onDragStart = { offset ->
+                            val barHeightPx = size.height.toFloat()
+                            val thumbHeightPx = thumbHeight.toPx()
+                            val scrollableHeightPx = barHeightPx - thumbHeightPx
+                            
+                            // 現在のつまみ位置を再計算（タッチ時点の最新状態）
+                            val currentFirstIndex = listState.firstVisibleItemIndex
+                            val currentFirstOffset = listState.firstVisibleItemScrollOffset
+                            // pointerInputスコープ内ではvisibleItemsInfoにアクセスできないため、簡易計算またはcaptured valueを使用
+                            // captureされたvisibleItemsInfoを使用（再コンポーズ毎に更新されるため概ね正しい）
+                            val currentAvgItemHeight = if (visibleItemsInfo.isNotEmpty()) {
+                                visibleItemsInfo.sumOf { it.size } / visibleItemsInfo.size.toFloat()
+                            } else 1f // 0除算回避
+                            
+                            val currentOffsetInItem = currentFirstOffset.toFloat() / currentAvgItemHeight
+                            val currentAccurateIndex = currentFirstIndex + currentOffsetInItem
+                            val currentProgressCaptured = (currentAccurateIndex / totalItemsCount.toFloat()).coerceIn(0f, 1f)
+                            
+                            val currentThumbY = scrollableHeightPx * currentProgressCaptured
+                            
+                            // つまみをタップしたかどうか判定
+                            if (offset.y >= currentThumbY && offset.y <= currentThumbY + thumbHeightPx) {
+                                // つまみを掴んだ：現在のオフセットを記憶
+                                dragOffset = offset.y - currentThumbY
+                            } else {
+                                // つまみ以外（トラックバー）をタップ：中心にジャンプ
+                                dragOffset = thumbHeightPx / 2
+                                if (scrollableHeightPx > 0) {
+                                    val targetThumbY = offset.y - dragOffset
+                                    val newProgress = (targetThumbY / scrollableHeightPx).coerceIn(0f, 1f)
+                                    val targetIndex = (newProgress * totalItemsCount).toInt()
+                                    coroutineScope.launch {
+                                        listState.scrollToItem(targetIndex)
+                                    }
+                                }
+                            }
+                        },
+                        onVerticalDrag = { change, _ ->
+                            change.consume()
+                            val barHeightPx = size.height.toFloat()
+                            val thumbHeightPx = thumbHeight.toPx()
+                            val scrollableHeightPx = barHeightPx - thumbHeightPx
+                            
+                            if (scrollableHeightPx > 0) {
+                                // 記憶したオフセットを使って目標位置を計算
+                                val targetThumbY = change.position.y - dragOffset
+                                val newProgress = (targetThumbY / scrollableHeightPx).coerceIn(0f, 1f)
+                                val targetIndex = (newProgress * totalItemsCount).toInt()
+                                coroutineScope.launch {
+                                    listState.scrollToItem(targetIndex)
+                                }
                             }
                         }
-                    },
-                    onVerticalDrag = { change, _ ->
-                        change.consume()
-                        // ドラッグ中の位置へ追従
-                        val barHeightPx = size.height.toFloat()
-                        val thumbHeightPx = thumbHeight.toPx()
-                        val scrollableHeightPx = barHeightPx - thumbHeightPx
-                        
-                        if (scrollableHeightPx > 0) {
-                            val progress = ((change.position.y - thumbHeightPx / 2) / scrollableHeightPx).coerceIn(0f, 1f)
-                            val targetIndex = (progress * totalItemsCount).toInt()
-                            coroutineScope.launch {
-                                listState.scrollToItem(targetIndex)
-                            }
-                        }
-                    }
-                )
+                    )
                 }
         ) {
             // 実際のバー（右端に表示）
