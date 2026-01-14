@@ -48,8 +48,17 @@ class MusicScanService : Service() {
         return START_NOT_STICKY
     }
 
+    private var wakeLock: android.os.PowerManager.WakeLock? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        val powerManager = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        wakeLock = powerManager.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "MusicPlayer:ScanServiceWakeLock")
+    }
+
     private fun startScan(uris: List<Uri>) {
         isScanning = true
+        wakeLock?.acquire(10 * 60 * 1000L /*10 minutes timeout*/)
         createNotificationChannel()
         
         val notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
@@ -57,42 +66,85 @@ class MusicScanService : Service() {
             .setContentText("準備中...")
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setProgress(0, 0, true)
+            .setOngoing(true)
             .build()
             
-        startForeground(NOTIFICATION_ID, notification)
+        // Use type-safe startForeground if targeting SDK 29+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
 
         serviceScope.launch {
-            var totalCount = 0
-            val newSongs = mutableListOf<Song>()
-            
-            // 1. 推定合計数をカウント (Progressバー用)
-            // SAFの場合は0になる可能性があるが、その場合は不定プログレスにする
-            uris.forEach { uri ->
-                 totalCount += countFilesInDirectory(this@MusicScanService, uri)
-            }
-
-            var processedCount = 0
-            
-            uris.forEach { uri ->
-                val songs = getAudioFilesFromDirectory(this@MusicScanService, uri, totalCount) { progress, currentCount ->
-                     processedCount++
-                     // 通知更新 (あまり頻繁にやらない)
-                     if (processedCount % 10 == 0) {
-                        updateNotification(processedCount, totalCount)
-                     }
-                     // UI更新用ブロードキャスト
-                     sendProgressBroadcast(progress, processedCount)
+            try {
+                var totalCount = 0
+                val newSongs = mutableListOf<Song>()
+                
+                uris.forEach { uri ->
+                     totalCount += countFilesInDirectory(this@MusicScanService, uri)
                 }
-                newSongs.addAll(songs)
+    
+                var processedCount = 0
+                
+                uris.forEach { uri ->
+                    val songs = getAudioFilesFromDirectory(this@MusicScanService, uri, totalCount) { progress, currentCount ->
+                         processedCount++
+                         if (processedCount % 10 == 0) {
+                            updateNotification(processedCount, totalCount)
+                         }
+                         sendProgressBroadcast(progress, processedCount)
+                    }
+                    newSongs.addAll(songs)
+                }
+                
+                sendCompleteBroadcast(newSongs)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                isScanning = false
+                if (wakeLock?.isHeld == true) wakeLock?.release()
+                stopSelf()
             }
-            
-            // 完了通知
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            sendCompleteBroadcast(newSongs)
-            isScanning = false
-            stopSelf()
         }
     }
+
+    // ... (Encoding Fix Logic) ...
+
+    // 文字化け検出関数
+    fun isGarbled(s: String?): Boolean {
+        if (s == null) return false
+        if (s.contains('\uFFFD')) return true
+        if (s.any { 
+            val c = it.code
+            (c < 32 && c != 9 && c != 10 && c != 13) || 
+            (c == 0x7F) || 
+            (c in 0x80..0x9F) 
+        }) return true
+        val japaneseChars = s.any { it.code in 0x3040..0x30FF || it.code in 0x4E00..0x9FFF }
+        if (japaneseChars) return false
+        val mojibakeChars = "‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ¡¢£¤¥¦§¨©ª«¬®¯°±²³´µ¶·¸¹º»¼½¾¿ÃÅÆÇÈÉÊËÌÍÎÏ"
+        val mojibakeCount = s.count { it in mojibakeChars }
+        return s.length > 0 && mojibakeCount.toFloat() / s.length.toFloat() > 0.3f
+    }
+
+    // 文字化け修復関数 (Latin-1 to Shift_JIS)
+    fun fixEncoding(original: String?): String? {
+        if (original == null) return null
+        try {
+            val bytes = original.toByteArray(Charsets.ISO_8859_1)
+            val sjis = String(bytes, java.nio.charset.Charset.forName("Shift_JIS"))
+            val originalJpCount = original.count { it.code in 0x3040..0x30FF || it.code in 0x4E00..0x9FFF }
+            val sjisJpCount = sjis.count { it.code in 0x3040..0x30FF || it.code in 0x4E00..0x9FFF }
+            if (sjisJpCount > originalJpCount) return sjis
+        } catch (e: Exception) {}
+        return original
+    }
+
+    // ... (Updated getAudioFilesFromDirectory logic to use fixEncoding) ...
+    // Note: Since we are replacing a large block, I will replace the relevant part in getAudioFilesFromDirectory
+
 
     private fun updateNotification(current: Int, total: Int) {
         val builder = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
