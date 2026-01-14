@@ -102,9 +102,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.1.16: スクロールバー完全修正（タッチ位置からの相対移動）
-private const val APP_VERSION = "v2.1.16"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v52"
+// v2.1.17: スクロールバー表示位置修正（上半分の追従問題解消）
+private const val APP_VERSION = "v2.1.17"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v53"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -2608,10 +2608,13 @@ fun VerticalScrollbar(
         val thumbHeightPx = with(LocalDensity.current) { thumbHeight.toPx() }
         val scrollableHeightPx = barHeightPx - thumbHeightPx
         
-        // 現在のスクロール進捗（表示用）
+        // 現在のスクロール進捗（表示用）- ドラッグ計算と同じロジックを使用
         val firstVisibleItemIndex = listState.firstVisibleItemIndex
-        val scrollProgress = (firstVisibleItemIndex.toFloat() / (totalItemsCount - visibleItemsInfo.size).coerceAtLeast(1)).coerceIn(0f, 1f)
-        val thumbOffset = with(LocalDensity.current) { (scrollableHeightPx * scrollProgress).toDp() }
+        // ドラッグと同じ比率: index / totalItemsCount = thumbY / barHeight
+        val scrollProgress = firstVisibleItemIndex.toFloat() / totalItemsCount.toFloat()
+        // つまみの位置 = 進捗 * (バー高さ - つまみ高さ) ではなく、進捗 * バー高さ（つまみの上端）
+        val thumbOffsetPx = scrollProgress * barHeightPx
+        val thumbOffset = with(LocalDensity.current) { thumbOffsetPx.toDp() }
         
         // タッチ操作を受け付ける透明なBox
         Box(
