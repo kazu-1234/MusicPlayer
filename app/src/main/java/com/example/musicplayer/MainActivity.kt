@@ -102,9 +102,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.1.19: プレイリスト「標準」並び順をM3Uファイル順に修正
-private const val APP_VERSION = "v2.1.19"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v55"
+// v2.2.0: 再生キューからスクロールバー削除（ドラッグ並び替え復元）
+private const val APP_VERSION = "v2.2.0"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v56"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -1179,10 +1179,6 @@ fun FullScreenPlayer(
                             }
                         }
                     }
-                    VerticalScrollbar(
-                         modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
-                         listState = listState
-                    )
                 }
             },
             confirmButton = {
