@@ -102,9 +102,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.2.1: プレイリスト曲マッチング修正（同名ファイル誤マッチ防止）
-private const val APP_VERSION = "v2.2.1"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v57"
+// v2.2.2: プレイリスト曲マッチング改善（スマートマッチング）
+private const val APP_VERSION = "v2.2.2"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v58"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -2441,17 +2441,21 @@ private suspend fun parseM3uPlaylist(context: Context, playlistUri: Uri, allSong
         val playlistSongs = mutableListOf<Song>()
         val playlistName = getFileName(context, playlistUri)?.replace(".m3u8", "")?.replace(".m3u", "") ?: "プレイリスト"
         
-        // ファイル名だけでなく、アーティスト/アルバム/ファイル名の組み合わせでマッチング
-        // ライブラリ内の曲を相対パス風のキーでインデックス化
-        val songsByRelativePath = mutableMapOf<String, Song>()
-        val songsByDisplayName = mutableMapOf<String, Song>()
+        // マッチング用のインデックスを作成
+        // ファイル名でグループ化し、重複があるかどうかを判定
+        val songsByDisplayName = allSongs.groupBy { it.displayName.lowercase() }
         
+        // パスベースのマッチング用（フォルダ名/アルバムフォルダ/ファイル名）
+        val songsByPath = mutableMapOf<String, Song>()
         allSongs.forEach { song ->
-            // ファイル名でのマッチング用
-            songsByDisplayName[song.displayName] = song
-            // アーティスト/アルバム/ファイル名の組み合わせでのマッチング用
-            val key = "${song.artist}/${song.album}/${song.displayName}".lowercase()
-            songsByRelativePath[key] = song
+            // URIからパスを抽出してキーを作成
+            val uriPath = song.uri.path ?: song.uri.toString()
+            val pathParts = uriPath.split("/").filter { it.isNotBlank() }
+            if (pathParts.size >= 3) {
+                // 最後の3パーツ（親フォルダ/アルバムフォルダ/ファイル名）でマッチング
+                val key = "${pathParts[pathParts.size - 3]}/${pathParts[pathParts.size - 2]}/${pathParts.last()}".lowercase()
+                songsByPath[key] = song
+            }
         }
 
         context.contentResolver.openInputStream(playlistUri)?.use { inputStream ->
@@ -2461,32 +2465,37 @@ private suspend fun parseM3uPlaylist(context: Context, playlistUri: Uri, allSong
                         val trimmedLine = line.trim()
                         var matchedSong: Song? = null
                         
-                        // 方法1: ベースパスを除去して相対パスから探す
-                        if (basePath.isNotBlank() && trimmedLine.startsWith(basePath, ignoreCase = true)) {
-                            // Windowsパスから相対パスを抽出
-                            val relativePath = trimmedLine.substring(basePath.length)
-                                .replace("\\", "/")  // バックスラッシュをスラッシュに変換
-                            
-                            // パスからアーティスト/アルバム/ファイル名を抽出
-                            val pathParts = relativePath.split("/").filter { it.isNotBlank() }
+                        // M3Uファイルからファイル名を抽出
+                        val fileNameFromM3u = trimmedLine.substringAfterLast('/').substringAfterLast('\\').trim().lowercase()
+                        
+                        // 方法1: ファイル名でマッチング（ユニークな場合のみ）
+                        val candidatesByName = songsByDisplayName[fileNameFromM3u]
+                        if (candidatesByName != null && candidatesByName.size == 1) {
+                            // ファイル名がユニークなら直接マッチ
+                            matchedSong = candidatesByName.first()
+                        } else if (candidatesByName != null && candidatesByName.size > 1) {
+                            // 同名ファイルが複数ある場合はパスで絞り込む
+                            val pathParts = trimmedLine.replace("\\", "/").split("/").filter { it.isNotBlank() }
                             if (pathParts.size >= 3) {
-                                // 例: flac/Mrs. GREEN APPLE/10/breakfast.flac
-                                // 最後の3つ（アーティスト/アルバム/ファイル名）を使用
-                                val artist = pathParts[pathParts.size - 3]
-                                val album = pathParts[pathParts.size - 2]
-                                val fileName = pathParts.last()
-                                val key = "$artist/$album/$fileName".lowercase()
-                                matchedSong = songsByRelativePath[key]
+                                val key = "${pathParts[pathParts.size - 3]}/${pathParts[pathParts.size - 2]}/${pathParts.last()}".lowercase()
+                                matchedSong = songsByPath[key]
                             }
                         }
                         
-                        // ファイル名のみでのフォールバックは削除
-                        // 異なるパスの同名ファイルを誤ってマッチさせる原因となるため
+                        // 方法2: ベースパスを使ったパスマッチング（フォールバック）
+                        if (matchedSong == null && basePath.isNotBlank() && trimmedLine.startsWith(basePath, ignoreCase = true)) {
+                            val relativePath = trimmedLine.substring(basePath.length).replace("\\", "/")
+                            val pathParts = relativePath.split("/").filter { it.isNotBlank() }
+                            if (pathParts.size >= 3) {
+                                val key = "${pathParts[pathParts.size - 3]}/${pathParts[pathParts.size - 2]}/${pathParts.last()}".lowercase()
+                                matchedSong = songsByPath[key]
+                            }
+                        }
                         
                         if (matchedSong != null) {
                             playlistSongs.add(matchedSong)
                         } else {
-                            // マッチしなかった場合はプレースホルダーを作成（存在しない曲として表示）
+                            // マッチしなかった場合はプレースホルダーを作成
                             val fileName = trimmedLine.substringAfterLast('/').substringAfterLast('\\').trim()
                             playlistSongs.add(Song(
                                 uri = Uri.parse("file://$trimmedLine"),
