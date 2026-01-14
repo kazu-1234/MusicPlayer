@@ -102,9 +102,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.3.0: アルバムアート表示 + 再生/シャッフルボタン追加
-private const val APP_VERSION = "v2.3.0"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v59"
+// v2.3.1: ボタン配置改善（スクロールと一緒に動く）
+private const val APP_VERSION = "v2.3.1"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v60"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -1707,38 +1707,44 @@ fun SongsTab(songList: List<Song>, currentSong: Song?, sortType: SortType, sortO
         }
         if (sortOrder == SortOrder.DESC) songList.sortedWith(comparator.reversed()) else songList.sortedWith(comparator)
     }
-    Column {
-        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            var expanded by remember { mutableStateOf(false) }
-            Box {
-                Button(onClick = { expanded = true }) {
-                    Text(when(sortType){
-                        SortType.DEFAULT -> "標準"; SortType.TITLE -> "曲名"; SortType.ARTIST -> "アーティスト"
-                        SortType.ALBUM -> "アルバム"; SortType.PLAY_COUNT -> "再生回数"
-                    })
+    SongList(
+        songs = sortedList, 
+        currentSong = currentSong, 
+        onSongClick = onSongClick,
+        onPlayAll = { songs -> onSongClick(songs.first(), songs) },
+        onShuffleAll = { songs -> 
+            val shuffled = songs.shuffled()
+            onSongClick(shuffled.first(), shuffled)
+        },
+        headerContent = {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), 
+                horizontalArrangement = Arrangement.SpaceBetween, 
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                var expanded by remember { mutableStateOf(false) }
+                Box {
+                    Button(onClick = { expanded = true }) {
+                        Text(when(sortType){
+                            SortType.DEFAULT -> "標準"; SortType.TITLE -> "曲名"; SortType.ARTIST -> "アーティスト"
+                            SortType.ALBUM -> "アルバム"; SortType.PLAY_COUNT -> "再生回数"
+                        })
+                    }
+                    DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                        DropdownMenuItem(text = { Text("標準") }, onClick = { onSortTypeChange(SortType.DEFAULT); expanded = false })
+                        DropdownMenuItem(text = { Text("曲名") }, onClick = { onSortTypeChange(SortType.TITLE); expanded = false })
+                        DropdownMenuItem(text = { Text("アーティスト") }, onClick = { onSortTypeChange(SortType.ARTIST); expanded = false })
+                        DropdownMenuItem(text = { Text("アルバム") }, onClick = { onSortTypeChange(SortType.ALBUM); expanded = false })
+                        DropdownMenuItem(text = { Text("再生回数") }, onClick = { onSortTypeChange(SortType.PLAY_COUNT); expanded = false })
+                    }
                 }
-                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                    DropdownMenuItem(text = { Text("標準") }, onClick = { onSortTypeChange(SortType.DEFAULT); expanded = false })
-                    DropdownMenuItem(text = { Text("曲名") }, onClick = { onSortTypeChange(SortType.TITLE); expanded = false })
-                    DropdownMenuItem(text = { Text("アーティスト") }, onClick = { onSortTypeChange(SortType.ARTIST); expanded = false })
-                    DropdownMenuItem(text = { Text("アルバム") }, onClick = { onSortTypeChange(SortType.ALBUM); expanded = false })
-                    DropdownMenuItem(text = { Text("再生回数") }, onClick = { onSortTypeChange(SortType.PLAY_COUNT); expanded = false })
+                Button(onClick = { onSortOrderChange(if (sortOrder == SortOrder.ASC) SortOrder.DESC else SortOrder.ASC) }) { 
+                    Text(if (sortOrder == SortOrder.ASC) "昇順" else "降順") 
                 }
             }
-            Button(onClick = { onSortOrderChange(if (sortOrder == SortOrder.ASC) SortOrder.DESC else SortOrder.ASC) }) { Text(if (sortOrder == SortOrder.ASC) "昇順" else "降順") }
+            HorizontalDivider()
         }
-        HorizontalDivider()
-        SongList(
-            songs = sortedList, 
-            currentSong = currentSong, 
-            onSongClick = onSongClick,
-            onPlayAll = { songs -> onSongClick(songs.first(), songs) },
-            onShuffleAll = { songs -> 
-                val shuffled = songs.shuffled()
-                onSongClick(shuffled.first(), shuffled)
-            }
-        )
-    }
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -1887,27 +1893,6 @@ fun PlaylistDetailScreen(playlist: Playlist, currentSong: Song?, onSongClick: (S
     Column {
         TopAppBar(title = { Text(playlist.name) }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } })
         
-        // プレイリスト内ソート機能
-        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            var expanded by remember { mutableStateOf(false) }
-            Box {
-                Button(onClick = { expanded = true }) {
-                    Text(when(sortType){
-                        SortType.DEFAULT -> "標準"; SortType.TITLE -> "曲名"; SortType.ARTIST -> "アーティスト"
-                        SortType.ALBUM -> "アルバム"; SortType.PLAY_COUNT -> "再生回数"
-                    })
-                }
-                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                    DropdownMenuItem(text = { Text("標準") }, onClick = { sortType = SortType.DEFAULT; expanded = false })
-                    DropdownMenuItem(text = { Text("曲名") }, onClick = { sortType = SortType.TITLE; expanded = false })
-                    DropdownMenuItem(text = { Text("アーティスト") }, onClick = { sortType = SortType.ARTIST; expanded = false })
-                    DropdownMenuItem(text = { Text("アルバム") }, onClick = { sortType = SortType.ALBUM; expanded = false })
-                    DropdownMenuItem(text = { Text("再生回数") }, onClick = { sortType = SortType.PLAY_COUNT; expanded = false })
-                }
-            }
-            Button(onClick = { sortOrder = if (sortOrder == SortOrder.ASC) SortOrder.DESC else SortOrder.ASC }) { Text(if (sortOrder == SortOrder.ASC) "昇順" else "降順") }
-        }
-
         SongList(
             songs = sortedSongs, 
             currentSong = currentSong, 
@@ -1916,6 +1901,35 @@ fun PlaylistDetailScreen(playlist: Playlist, currentSong: Song?, onSongClick: (S
             onShuffleAll = { songs -> 
                 val shuffled = songs.shuffled()
                 onSongClick(shuffled.first(), shuffled)
+            },
+            headerContent = {
+                // プレイリスト内ソート機能
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), 
+                    horizontalArrangement = Arrangement.SpaceBetween, 
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    var expanded by remember { mutableStateOf(false) }
+                    Box {
+                        Button(onClick = { expanded = true }) {
+                            Text(when(sortType){
+                                SortType.DEFAULT -> "標準"; SortType.TITLE -> "曲名"; SortType.ARTIST -> "アーティスト"
+                                SortType.ALBUM -> "アルバム"; SortType.PLAY_COUNT -> "再生回数"
+                            })
+                        }
+                        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                            DropdownMenuItem(text = { Text("標準") }, onClick = { sortType = SortType.DEFAULT; expanded = false })
+                            DropdownMenuItem(text = { Text("曲名") }, onClick = { sortType = SortType.TITLE; expanded = false })
+                            DropdownMenuItem(text = { Text("アーティスト") }, onClick = { sortType = SortType.ARTIST; expanded = false })
+                            DropdownMenuItem(text = { Text("アルバム") }, onClick = { sortType = SortType.ALBUM; expanded = false })
+                            DropdownMenuItem(text = { Text("再生回数") }, onClick = { sortType = SortType.PLAY_COUNT; expanded = false })
+                        }
+                    }
+                    Button(onClick = { sortOrder = if (sortOrder == SortOrder.ASC) SortOrder.DESC else SortOrder.ASC }) { 
+                        Text(if (sortOrder == SortOrder.ASC) "昇順" else "降順") 
+                    }
+                }
+                HorizontalDivider()
             }
         )
     }
@@ -2105,52 +2119,58 @@ fun SongList(
     currentSong: Song?, 
     onSongClick: (Song, List<Song>) -> Unit,
     onPlayAll: ((List<Song>) -> Unit)? = null,
-    onShuffleAll: ((List<Song>) -> Unit)? = null
+    onShuffleAll: ((List<Song>) -> Unit)? = null,
+    headerContent: (@Composable () -> Unit)? = null
 ) {
     val listState = rememberLazyListState()
-    Column(modifier = Modifier.fillMaxWidth()) {
-        // 再生ボタンとシャッフルボタン
-        if (songs.isNotEmpty() && (onPlayAll != null || onShuffleAll != null)) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                if (onPlayAll != null) {
-                    Button(
-                        onClick = { onPlayAll(songs) },
-                        modifier = Modifier.weight(1f)
+    Box(modifier = Modifier.fillMaxWidth()) {
+        LazyColumn(state = listState, modifier = Modifier.fillMaxWidth()) {
+            // ヘッダー（並び替えボタンなど）- スクロールと一緒に動く
+            if (headerContent != null) {
+                item { headerContent() }
+            }
+            
+            // 再生ボタンとシャッフルボタン - スクロールと一緒に動く
+            if (songs.isNotEmpty() && (onPlayAll != null || onShuffleAll != null)) {
+                item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("再生", maxLines = 1)
+                        if (onPlayAll != null) {
+                            Button(
+                                onClick = { onPlayAll(songs) },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("再生", maxLines = 1)
+                            }
+                        }
+                        if (onShuffleAll != null) {
+                            OutlinedButton(
+                                onClick = { onShuffleAll(songs) },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Default.Shuffle, contentDescription = null, modifier = Modifier.size(20.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("シャッフル", maxLines = 1)
+                            }
+                        }
                     }
-                }
-                if (onShuffleAll != null) {
-                    OutlinedButton(
-                        onClick = { onShuffleAll(songs) },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Default.Shuffle, contentDescription = null, modifier = Modifier.size(20.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("シャッフル", maxLines = 1)
-                    }
+                    HorizontalDivider()
                 }
             }
-            HorizontalDivider()
+            
+            // 曲リスト
+            items(songs) { song -> SongListItem(song, (song == currentSong)) { onSongClick(it, songs) } }
         }
-        
-        // 曲リスト
-        Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
-            LazyColumn(state = listState, modifier = Modifier.fillMaxWidth()) { 
-                items(songs) { song -> SongListItem(song, (song == currentSong)) { onSongClick(it, songs) } } 
-            }
-            VerticalScrollbar(
-                modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
-                listState = listState
-            )
-        }
+        VerticalScrollbar(
+            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+            listState = listState
+        )
     }
 }
 
