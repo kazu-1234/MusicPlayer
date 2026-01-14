@@ -102,13 +102,102 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.5.0: リファクタリング (ファイル分割 Model/Utils)
+// v2.5.0: 永続キャッシュ & UI改善 & 検索機能
 private const val APP_VERSION = "v2.5.0"
 private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-15 v68"
 
+// --- アルバムアートキャッシュ (v2.5.0: 永続化対応) ---
+object AlbumArtCache {
+    private val maxMemory = (Runtime.getRuntime().maxMemory() / 1024).toInt()
+    private val cacheSize = maxMemory / 8 // メモリの1/8を使用
+    private val memoryCache = object : android.util.LruCache<String, android.graphics.Bitmap>(cacheSize) {
+        override fun sizeOf(key: String, bitmap: android.graphics.Bitmap): Int {
+            return bitmap.byteCount / 1024 // KB単位
+        }
+    }
 
+    private fun getCacheDir(context: Context): java.io.File {
+        val dir = java.io.File(context.cacheDir, "album_art")
+        if (!dir.exists()) dir.mkdirs()
+        return dir
+    }
 
+    private fun getKeyFile(context: Context, key: String): java.io.File {
+        // URI文字列をハッシュ化してファイル名にする
+        val filename = key.hashCode().toString() + ".png"
+        return java.io.File(getCacheDir(context), filename)
+    }
 
+    fun get(context: Context, key: String): android.graphics.Bitmap? {
+        // 1. メモリキャッシュ確認
+        memoryCache.get(key)?.let { return it }
+
+        // 2. ディスクキャッシュ確認
+        val file = getKeyFile(context, key)
+        if (file.exists()) {
+            try {
+                val bitmap = android.graphics.BitmapFactory.decodeFile(file.absolutePath)
+                if (bitmap != null) {
+                    memoryCache.put(key, bitmap)
+                    return bitmap
+                }
+            } catch (e: Exception) {
+                file.delete()
+            }
+        }
+        return null
+    }
+
+    fun put(context: Context, key: String, bitmap: android.graphics.Bitmap) {
+        // 1. メモリ保存
+        if (memoryCache.get(key) == null) {
+            memoryCache.put(key, bitmap)
+        }
+
+        // 2. ディスク保存 (非同期)
+        kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val file = getKeyFile(context, key)
+                if (!file.exists()) {
+                    java.io.FileOutputStream(file).use { out ->
+                        bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+                    }
+                }
+            } catch (e: Exception) {
+                // 保存失敗は無視
+            }
+        }
+    }
+    
+    fun clear(context: Context) {
+        memoryCache.evictAll()
+        try {
+            getCacheDir(context).deleteRecursively()
+        } catch (e: Exception) {}
+    }
+}
+
+// 画像リサイズ用ユーティリティ
+fun calculateInSampleSize(options: android.graphics.BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+    val (height: Int, width: Int) = options.run { outHeight to outWidth }
+    var inSampleSize = 1
+
+    if (height > reqHeight || width > reqWidth) {
+        val halfHeight: Int = height / 2
+        val halfWidth: Int = width / 2
+
+        while (inSampleSize * 2 <= 64 && (halfHeight / inSampleSize) >= reqHeight && (halfWidth / inSampleSize) >= reqWidth) {
+            inSampleSize *= 2
+        }
+    }
+    return inSampleSize
+}
+
+// --- データ構造の定義 ---
+enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
+enum class SortOrder { ASC, DESC }
+enum class TabType { SONGS, PLAYLISTS, ARTISTS, ALBUMS }
+enum class RepeatMode { OFF, ALL, ONE }
 
 // --- 定数 ---
 private const val PREFS_NAME = "MusicPlayerPrefs"
@@ -426,6 +515,10 @@ fun MusicPlayerScreen(
     var repeatMode by remember { mutableStateOf(RepeatMode.OFF) }
     var isShuffleEnabled by remember { mutableStateOf(false) }
     
+    // 検索機能 (v2.5.0)
+    var searchQuery by remember { mutableStateOf("") }
+    var isSearchActive by remember { mutableStateOf(false) }
+    
     // ServiceConnection
     val serviceConnection = remember {
         object : android.content.ServiceConnection {
@@ -678,23 +771,59 @@ fun MusicPlayerScreen(
         // メイン画面（常に表示）
         Scaffold(
             topBar = {
-                TopAppBar(
-                    title = { 
-                         Column {
-                             Text("Music Player")
-                             if (isScanning) {
-                                 val percent = (scanProgress * 100).toInt()
-                                 Text("読み込み中: ${percent}% (${scanCount}曲)", style = MaterialTheme.typography.bodySmall)
-                                 LinearProgressIndicator(progress = { scanProgress }, modifier = Modifier.fillMaxWidth().height(2.dp))
-                             }
-                         }
-                    },
-                    actions = {
-                        IconButton(onClick = onNavigateToSettings) {
-                            Icon(Icons.Default.Settings, contentDescription = "Settings")
+                if (isSearchActive) {
+                    // 検索バー
+                    TopAppBar(
+                        title = {
+                            TextField(
+                                value = searchQuery,
+                                onValueChange = { searchQuery = it },
+                                placeholder = { Text("曲、アーティスト、アルバムを検索") },
+                                singleLine = true,
+                                colors = TextFieldDefaults.colors(
+                                    focusedContainerColor = Color.Transparent,
+                                    unfocusedContainerColor = Color.Transparent,
+                                    focusedIndicatorColor = Color.Transparent,
+                                    unfocusedIndicatorColor = Color.Transparent
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        },
+                        navigationIcon = {
+                            IconButton(onClick = {
+                                isSearchActive = false
+                                searchQuery = ""
+                            }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Close Search") }
+                        },
+                        actions = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Close, "Clear") }
+                            }
                         }
-                    }
-                )
+                    )
+                } else {
+                    // 通常ヘッダー
+                    TopAppBar(
+                        title = { 
+                             Column {
+                                 Text("Music Player")
+                                 if (isScanning) {
+                                     val percent = (scanProgress * 100).toInt()
+                                     Text("読み込み中: ${percent}% (${scanCount}曲)", style = MaterialTheme.typography.bodySmall)
+                                     LinearProgressIndicator(progress = { scanProgress }, modifier = Modifier.fillMaxWidth().height(2.dp))
+                                 }
+                             }
+                        },
+                        actions = {
+                            IconButton(onClick = { isSearchActive = true }) {
+                                Icon(Icons.Default.Search, contentDescription = "Search")
+                            }
+                            IconButton(onClick = onNavigateToSettings) {
+                                Icon(Icons.Default.Settings, contentDescription = "Settings")
+                            }
+                        }
+                    )
+                }
             },
             bottomBar = {
                 // ミニプレイヤーバー（曲が選択されている場合のみ表示）
@@ -735,8 +864,18 @@ fun MusicPlayerScreen(
                         )
                     }
                 }
+                // リストのフィルタリング
+                val filteredSongs = remember(songList, searchQuery) {
+                    if (searchQuery.isBlank()) songList
+                    else songList.filter {
+                        it.title.contains(searchQuery, true) ||
+                        it.artist.contains(searchQuery, true) ||
+                        it.album.contains(searchQuery, true)
+                    }
+                }
+                
                 when (currentTabs.getOrNull(selectedTabIndex)) {
-                    TabType.SONGS -> SongsTab(songList, currentSong, sortType, sortOrder, onSongClick = playSong, onSortTypeChange = { sortType = it }, onSortOrderChange = { sortOrder = it })
+                    TabType.SONGS -> SongsTab(filteredSongs, currentSong, sortType, sortOrder, onSongClick = playSong, onSortTypeChange = { sortType = it }, onSortOrderChange = { sortOrder = it })
                     TabType.PLAYLISTS -> PlaylistTab(playlists, songList, currentSong, onPlaylistChanged = onPlaylistsChange, onSongClick = playSong)
                     TabType.ARTISTS -> ArtistFolderTab(songList, onSongClick = playSong)
                     TabType.ALBUMS -> AlbumFolderTab(songList, onSongClick = playSong)
@@ -793,7 +932,19 @@ fun MusicPlayerScreen(
                             else if (currentIndex == to) currentIndex = from
                         }
                     },
-                    onDismiss = { showFullPlayer = false }
+                    onDismiss = { showFullPlayer = false },
+                    onArtistClick = { artist ->
+                        isSearchActive = true
+                        searchQuery = artist
+                        selectedTabIndex = 0 // Songsタブへ移動
+                        showFullPlayer = false
+                    },
+                    onAlbumClick = { album ->
+                        isSearchActive = true
+                        searchQuery = album
+                        selectedTabIndex = 0 // Songsタブへ移動
+                        showFullPlayer = false
+                    }
                 )
             }
         }
@@ -1009,7 +1160,9 @@ fun FullScreenPlayer(
     onRepeatToggle: () -> Unit,
     onShuffleToggle: () -> Unit,
     onReorder: (Int, Int) -> Unit = { _, _ -> },
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onArtistClick: (String) -> Unit = {},
+    onAlbumClick: (String) -> Unit = {}
 ) {
     var offsetY by remember { mutableStateOf(0f) }
     val albumArt = rememberAlbumArt(context, currentSong.uri)
@@ -1227,7 +1380,19 @@ fun FullScreenPlayer(
                 color = MaterialTheme.colorScheme.primary,
                 textAlign = TextAlign.Center,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.clickable { onArtistClick(currentSong.artist) }
+            )
+            
+            // アルバム名 (追加: v2.5.0)
+            Text(
+                currentSong.album,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.clickable { onAlbumClick(currentSong.album) }
             )
             
             Spacer(modifier = Modifier.height(24.dp))
@@ -1544,6 +1709,23 @@ fun SettingsScreen(
                 }) { Text("保存") }
             }
             item {
+                HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+
+                // キャッシュ設定 (v2.5.0)
+                Text("ストレージ設定", style = MaterialTheme.typography.titleLarge)
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        AlbumArtCache.clear(context)
+                        Toast.makeText(context, "キャッシュを削除しました", Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Icon(Icons.Default.Delete, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("画像キャッシュを削除")
+                }
+
                 HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
                 
                 // バージョン情報 + アップデート統合
@@ -2135,17 +2317,16 @@ fun SongListItem(song: Song, isCurrentlyPlaying: Boolean, onSongClick: (Song) ->
     
     // アルバムアートを非同期で取得
     // アルバムアートを非同期で取得 (キャッシュ対応 v2.4.5)
-    var albumArtBitmap by remember(song.uri) { mutableStateOf<android.graphics.Bitmap?>(AlbumArtCache.get(song.uri.toString())) }
+    var albumArtBitmap by remember(song.uri) { mutableStateOf<android.graphics.Bitmap?>(AlbumArtCache.get(context, song.uri.toString())) }
     LaunchedEffect(song.uri) {
         if (albumArtBitmap == null) {
             withContext(Dispatchers.IO) {
                 try {
                     // キャッシュ再確認
-                    val cached = AlbumArtCache.get(song.uri.toString())
+                    val cached = AlbumArtCache.get(context, song.uri.toString())
                     if (cached != null) {
                         albumArtBitmap = cached
                     } else {
-
                         val retriever = MediaMetadataRetriever()
                         context.contentResolver.openFileDescriptor(song.uri, "r")?.use { pfd ->
                             retriever.setDataSource(pfd.fileDescriptor)
@@ -2161,7 +2342,7 @@ fun SongListItem(song: Song, isCurrentlyPlaying: Boolean, onSongClick: (Song) ->
                                 options.inJustDecodeBounds = false
                                 
                                 val bitmap = android.graphics.BitmapFactory.decodeByteArray(art, 0, art.size, options)
-                                AlbumArtCache.put(song.uri.toString(), bitmap)
+                                AlbumArtCache.put(context, song.uri.toString(), bitmap)
                                 albumArtBitmap = bitmap
                             }
                         }
