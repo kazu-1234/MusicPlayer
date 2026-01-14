@@ -102,9 +102,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.1.13: スクロールバー操作改善（Grab & Drag対応）
-private const val APP_VERSION = "v2.1.13"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v46"
+// v2.1.14: スクロールバー精度向上（位置ズレ修正）
+private const val APP_VERSION = "v2.1.14"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v50"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -2565,13 +2565,7 @@ private fun downloadAndInstallApk(context: Context, url: String) {
     }
 }
 
-// --- アプリ情報 ---
-// v2.1.14: スクロールバー精度向上（位置ズレ修正）
-private const val APP_VERSION = "v2.1.14"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v50"
 
-// --- データ構造の定義 ---
-enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
 
 @Preview(showBackground = true)
 @Composable
