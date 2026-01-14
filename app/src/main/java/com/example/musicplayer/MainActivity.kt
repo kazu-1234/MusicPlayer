@@ -102,9 +102,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.2.2: プレイリスト曲マッチング改善（スマートマッチング）
-private const val APP_VERSION = "v2.2.2"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v58"
+// v2.3.0: アルバムアート表示 + 再生/シャッフルボタン追加
+private const val APP_VERSION = "v2.3.0"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v59"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -1728,7 +1728,16 @@ fun SongsTab(songList: List<Song>, currentSong: Song?, sortType: SortType, sortO
             Button(onClick = { onSortOrderChange(if (sortOrder == SortOrder.ASC) SortOrder.DESC else SortOrder.ASC) }) { Text(if (sortOrder == SortOrder.ASC) "昇順" else "降順") }
         }
         HorizontalDivider()
-        SongList(songs = sortedList, currentSong = currentSong, onSongClick = { song -> onSongClick(song, sortedList) })
+        SongList(
+            songs = sortedList, 
+            currentSong = currentSong, 
+            onSongClick = onSongClick,
+            onPlayAll = { songs -> onSongClick(songs.first(), songs) },
+            onShuffleAll = { songs -> 
+                val shuffled = songs.shuffled()
+                onSongClick(shuffled.first(), shuffled)
+            }
+        )
     }
 }
 
@@ -1899,7 +1908,16 @@ fun PlaylistDetailScreen(playlist: Playlist, currentSong: Song?, onSongClick: (S
             Button(onClick = { sortOrder = if (sortOrder == SortOrder.ASC) SortOrder.DESC else SortOrder.ASC }) { Text(if (sortOrder == SortOrder.ASC) "昇順" else "降順") }
         }
 
-        SongList(songs = sortedSongs, currentSong = currentSong, onSongClick = { song -> onSongClick(song, sortedSongs) })
+        SongList(
+            songs = sortedSongs, 
+            currentSong = currentSong, 
+            onSongClick = onSongClick,
+            onPlayAll = { songs -> onSongClick(songs.first(), songs) },
+            onShuffleAll = { songs -> 
+                val shuffled = songs.shuffled()
+                onSongClick(shuffled.first(), shuffled)
+            }
+        )
     }
 }
 
@@ -1994,7 +2012,16 @@ fun ArtistFolderTab(songList: List<Song>, onSongClick: (Song, List<Song>) -> Uni
                         }
                     }
                 )
-                SongList(songs = songs, currentSong = null, onSongClick = { song -> onSongClick(song, songs) })
+                SongList(
+                    songs = songs, 
+                    currentSong = null, 
+                    onSongClick = onSongClick,
+                    onPlayAll = { songList -> onSongClick(songList.first(), songList) },
+                    onShuffleAll = { songList -> 
+                        val shuffled = songList.shuffled()
+                        onSongClick(shuffled.first(), shuffled)
+                    }
+                )
             }
         }
         // 2. アーティストが選択されたら、そのアーティストのアルバムリストを表示
@@ -2054,7 +2081,16 @@ fun AlbumFolderTab(songList: List<Song>, onSongClick: (Song, List<Song>) -> Unit
                 title = { Text(selectedAlbum!!.ifBlank { "不明なアルバム" }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = { IconButton(onClick = { selectedAlbum = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }
             )
-            SongList(songs = songsByAlbum, currentSong = null, onSongClick = { song -> onSongClick(song, songsByAlbum) })
+            SongList(
+                songs = songsByAlbum, 
+                currentSong = null, 
+                onSongClick = onSongClick,
+                onPlayAll = { songs -> onSongClick(songs.first(), songs) },
+                onShuffleAll = { songs -> 
+                    val shuffled = songs.shuffled()
+                    onSongClick(shuffled.first(), shuffled)
+                }
+            )
         }
     } else {
         // 最初にアルバム一覧を表示
@@ -2064,21 +2100,84 @@ fun AlbumFolderTab(songList: List<Song>, onSongClick: (Song, List<Song>) -> Unit
 }
 
 @Composable
-fun SongList(songs: List<Song>, currentSong: Song?, onSongClick: (Song) -> Unit) {
+fun SongList(
+    songs: List<Song>, 
+    currentSong: Song?, 
+    onSongClick: (Song, List<Song>) -> Unit,
+    onPlayAll: ((List<Song>) -> Unit)? = null,
+    onShuffleAll: ((List<Song>) -> Unit)? = null
+) {
     val listState = rememberLazyListState()
-    Box(modifier = Modifier.fillMaxWidth()) {
-        LazyColumn(state = listState, modifier = Modifier.fillMaxWidth()) { 
-            items(songs) { song -> SongListItem(song, (song == currentSong), onSongClick) } 
+    Column(modifier = Modifier.fillMaxWidth()) {
+        // 再生ボタンとシャッフルボタン
+        if (songs.isNotEmpty() && (onPlayAll != null || onShuffleAll != null)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (onPlayAll != null) {
+                    Button(
+                        onClick = { onPlayAll(songs) },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("再生", maxLines = 1)
+                    }
+                }
+                if (onShuffleAll != null) {
+                    OutlinedButton(
+                        onClick = { onShuffleAll(songs) },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Shuffle, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("シャッフル", maxLines = 1)
+                    }
+                }
+            }
+            HorizontalDivider()
         }
-        VerticalScrollbar(
-            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
-            listState = listState
-        )
+        
+        // 曲リスト
+        Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            LazyColumn(state = listState, modifier = Modifier.fillMaxWidth()) { 
+                items(songs) { song -> SongListItem(song, (song == currentSong)) { onSongClick(it, songs) } } 
+            }
+            VerticalScrollbar(
+                modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+                listState = listState
+            )
+        }
     }
 }
 
 @Composable
 fun SongListItem(song: Song, isCurrentlyPlaying: Boolean, onSongClick: (Song) -> Unit) {
+    val context = LocalContext.current
+    
+    // アルバムアートを非同期で取得
+    var albumArtBitmap by remember(song.uri) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    LaunchedEffect(song.uri) {
+        withContext(Dispatchers.IO) {
+            try {
+                val retriever = MediaMetadataRetriever()
+                context.contentResolver.openFileDescriptor(song.uri, "r")?.use { pfd ->
+                    retriever.setDataSource(pfd.fileDescriptor)
+                    val art = retriever.embeddedPicture
+                    if (art != null) {
+                        albumArtBitmap = android.graphics.BitmapFactory.decodeByteArray(art, 0, art.size)
+                    }
+                }
+                retriever.release()
+            } catch (e: Exception) {
+                // アート取得失敗は無視
+            }
+        }
+    }
+    
     // 存在しないファイルはグレーアウト表示
     val textColor = if (song.exists) {
         MaterialTheme.colorScheme.onSurface
@@ -2091,26 +2190,57 @@ fun SongListItem(song: Song, isCurrentlyPlaying: Boolean, onSongClick: (Song) ->
         MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
     }
     
-    Column(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onSongClick(song) }
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            song.title,
-            fontWeight = if (isCurrentlyPlaying) FontWeight.Bold else FontWeight.Normal,
-            color = textColor,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        Text(
-            "${song.artist} - ${song.album}" + if (song.exists) " (再生: ${song.playCount}回)" else " [ファイルなし]",
-            style = MaterialTheme.typography.bodySmall,
-            color = subTextColor,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        // アルバムアートサムネイル（48dp）
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center
+        ) {
+            if (albumArtBitmap != null) {
+                Image(
+                    bitmap = albumArtBitmap!!.asImageBitmap(),
+                    contentDescription = "Album Art",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                Icon(
+                    Icons.Default.MusicNote,
+                    contentDescription = "No Art",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        }
+        
+        Spacer(modifier = Modifier.width(12.dp))
+        
+        // 曲情報
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                song.title,
+                fontWeight = if (isCurrentlyPlaying) FontWeight.Bold else FontWeight.Normal,
+                color = textColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                "${song.artist} - ${song.album}" + if (song.exists) " (再生: ${song.playCount}回)" else " [ファイルなし]",
+                style = MaterialTheme.typography.bodySmall,
+                color = subTextColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
     HorizontalDivider()
 }
