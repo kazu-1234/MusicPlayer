@@ -105,9 +105,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.5.1: UI配置改善 & タブ遷移連携 & 文字化け修正
-private const val APP_VERSION = "v2.5.1"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-15 v69"
+// v2.5.2: ナビゲーション挙動変更 (フォルダ展開)
+private const val APP_VERSION = "v2.5.2"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-15 v70"
 
 // --- アルバムアートキャッシュ (v2.5.0: 永続化対応) ---
 object AlbumArtCache {
@@ -522,6 +522,10 @@ fun MusicPlayerScreen(
     var searchQuery by remember { mutableStateOf("") }
     var isSearchActive by remember { mutableStateOf(false) }
     
+    // ナビゲーション機能 (v2.5.2)
+    var targetArtist by remember { mutableStateOf<String?>(null) }
+    var targetAlbum by remember { mutableStateOf<String?>(null) }
+    
     // ServiceConnection
     val serviceConnection = remember {
         object : android.content.ServiceConnection {
@@ -880,8 +884,8 @@ fun MusicPlayerScreen(
                 when (currentTabs.getOrNull(selectedTabIndex)) {
                     TabType.SONGS -> SongsTab(filteredSongs, currentSong, sortType, sortOrder, onSongClick = playSong, onSortTypeChange = { sortType = it }, onSortOrderChange = { sortOrder = it })
                     TabType.PLAYLISTS -> PlaylistTab(playlists, songList, currentSong, onPlaylistChanged = onPlaylistsChange, onSongClick = playSong)
-                    TabType.ARTISTS -> ArtistFolderTab(songList, onSongClick = playSong)
-                    TabType.ALBUMS -> AlbumFolderTab(songList, onSongClick = playSong)
+                    TabType.ARTISTS -> ArtistFolderTab(songList, onSongClick = playSong, targetArtist = targetArtist, onTargetConsume = { targetArtist = null })
+                    TabType.ALBUMS -> AlbumFolderTab(songList, onSongClick = playSong, targetAlbum = targetAlbum, onTargetConsume = { targetAlbum = null })
                     null -> {}
                 }
             }
@@ -937,15 +941,19 @@ fun MusicPlayerScreen(
                     },
                     onDismiss = { showFullPlayer = false },
                     onArtistClick = { artist ->
-                        isSearchActive = true
-                        searchQuery = artist
+                        // 検索状態をクリアして、アーティストタブへ移動・展開
+                        isSearchActive = false
+                        searchQuery = ""
+                        targetArtist = artist
                         val index = tabOrder.indexOf(TabType.ARTISTS)
                         selectedTabIndex = if (index >= 0) index else 0
                         showFullPlayer = false
                     },
                     onAlbumClick = { album ->
-                        isSearchActive = true
-                        searchQuery = album
+                        // 検索状態をクリアして、アルバムタブへ移動・展開
+                        isSearchActive = false
+                        searchQuery = ""
+                        targetAlbum = album
                         val index = tabOrder.indexOf(TabType.ALBUMS)
                         selectedTabIndex = if (index >= 0) index else 0
                         showFullPlayer = false
@@ -2139,9 +2147,23 @@ fun FolderList(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ArtistFolderTab(songList: List<Song>, onSongClick: (Song, List<Song>) -> Unit) {
+fun ArtistFolderTab(
+    songList: List<Song>, 
+    onSongClick: (Song, List<Song>) -> Unit,
+    targetArtist: String? = null,
+    onTargetConsume: () -> Unit = {}
+) {
     var selectedArtist by remember { mutableStateOf<String?>(null) }
     var selectedAlbum by remember { mutableStateOf<String?>(null) }
+
+    // 外部からの遷移リクエストを処理
+    LaunchedEffect(targetArtist) {
+        if (targetArtist != null) {
+            selectedArtist = normalizeArtistName(targetArtist)
+            selectedAlbum = null
+            onTargetConsume()
+        }
+    }
 
     // 戻るボタンのハンドリング
     BackHandler(enabled = selectedArtist != null) {
@@ -2220,8 +2242,21 @@ fun ArtistFolderTab(songList: List<Song>, onSongClick: (Song, List<Song>) -> Uni
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AlbumFolderTab(songList: List<Song>, onSongClick: (Song, List<Song>) -> Unit) {
+fun AlbumFolderTab(
+    songList: List<Song>, 
+    onSongClick: (Song, List<Song>) -> Unit,
+    targetAlbum: String? = null,
+    onTargetConsume: () -> Unit = {}
+) {
     var selectedAlbum by remember { mutableStateOf<String?>(null) }
+
+    // 外部からの遷移リクエストを処理
+    LaunchedEffect(targetAlbum) {
+        if (targetAlbum != null) {
+            selectedAlbum = targetAlbum
+            onTargetConsume()
+        }
+    }
 
     // 戻るボタンのハンドリング
     BackHandler(enabled = selectedAlbum != null) {
