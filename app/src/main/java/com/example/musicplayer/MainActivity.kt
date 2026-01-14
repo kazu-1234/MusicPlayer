@@ -102,9 +102,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.1.18: スクロールバーつまみ位置修正（TopEndから配置）
-private const val APP_VERSION = "v2.1.18"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v54"
+// v2.1.19: プレイリスト「標準」並び順をM3Uファイル順に修正
+private const val APP_VERSION = "v2.1.19"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v55"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -1864,14 +1864,19 @@ fun PlaylistDetailScreen(playlist: Playlist, currentSong: Song?, onSongClick: (S
     var sortOrder by remember { mutableStateOf(SortOrder.ASC) }
 
     val sortedSongs = remember(playlist.songs, sortType, sortOrder) {
-        val comparator = when (sortType) {
-            SortType.DEFAULT -> compareBy { song: Song -> song.displayName } // ファイル名順
-            SortType.TITLE -> compareBy(String.CASE_INSENSITIVE_ORDER) { song: Song -> song.title }
-            SortType.ARTIST -> compareBy(String.CASE_INSENSITIVE_ORDER) { song: Song -> song.artist }
-            SortType.ALBUM -> compareBy(String.CASE_INSENSITIVE_ORDER) { song: Song -> song.album }
-            SortType.PLAY_COUNT -> compareBy { song: Song -> song.playCount }
+        if (sortType == SortType.DEFAULT) {
+            // 標準：M3Uファイルの記載順序をそのまま維持
+            playlist.songs
+        } else {
+            val comparator = when (sortType) {
+                SortType.DEFAULT -> compareBy { song: Song -> 0 } // 使われない
+                SortType.TITLE -> compareBy(String.CASE_INSENSITIVE_ORDER) { song: Song -> song.title }
+                SortType.ARTIST -> compareBy(String.CASE_INSENSITIVE_ORDER) { song: Song -> song.artist }
+                SortType.ALBUM -> compareBy(String.CASE_INSENSITIVE_ORDER) { song: Song -> song.album }
+                SortType.PLAY_COUNT -> compareBy { song: Song -> song.playCount }
+            }
+            if (sortOrder == SortOrder.DESC) playlist.songs.sortedWith(comparator.reversed()) else playlist.songs.sortedWith(comparator)
         }
-        if (sortOrder == SortOrder.DESC) playlist.songs.sortedWith(comparator.reversed()) else playlist.songs.sortedWith(comparator)
     }
 
     Column {
