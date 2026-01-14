@@ -102,9 +102,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.4.5: アルバムアートキャッシュ & バックグラウンド安定化
-private const val APP_VERSION = "v2.4.5"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-15 v66"
+// v2.4.6: アルバムアート読み込み最適化 (Downsampling & LazyColumn Key)
+private const val APP_VERSION = "v2.4.6"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-15 v67"
 
 // --- アルバムアートキャッシュ (v2.4.5) ---
 object AlbumArtCache {
@@ -122,6 +122,22 @@ object AlbumArtCache {
             memoryCache.put(key, bitmap)
         }
     }
+}
+
+// 画像リサイズ用ユーティリティ
+fun calculateInSampleSize(options: android.graphics.BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+    val (height: Int, width: Int) = options.run { outHeight to outWidth }
+    var inSampleSize = 1
+
+    if (height > reqHeight || width > reqWidth) {
+        val halfHeight: Int = height / 2
+        val halfWidth: Int = width / 2
+
+        while (inSampleSize * 2 <= 64 && (halfHeight / inSampleSize) >= reqHeight && (halfWidth / inSampleSize) >= reqWidth) {
+            inSampleSize *= 2
+        }
+    }
+    return inSampleSize
 }
 
 // --- データ構造の定義 ---
@@ -2139,7 +2155,8 @@ fun SongList(
             }
             
             // 曲リスト
-            items(songs) { song -> SongListItem(song, (song == currentSong)) { onSongClick(it, songs) } }
+            // 曲リスト
+            items(songs, key = { it.uri.toString() }) { song -> SongListItem(song, (song == currentSong)) { onSongClick(it, songs) } }
         }
         VerticalScrollbar(
             modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
@@ -2164,12 +2181,22 @@ fun SongListItem(song: Song, isCurrentlyPlaying: Boolean, onSongClick: (Song) ->
                     if (cached != null) {
                         albumArtBitmap = cached
                     } else {
+
                         val retriever = MediaMetadataRetriever()
                         context.contentResolver.openFileDescriptor(song.uri, "r")?.use { pfd ->
                             retriever.setDataSource(pfd.fileDescriptor)
                             val art = retriever.embeddedPicture
                             if (art != null) {
-                                val bitmap = android.graphics.BitmapFactory.decodeByteArray(art, 0, art.size)
+                                // 最適化: ダウンサンプリングして読み込み (メモリ節約)
+                                val options = android.graphics.BitmapFactory.Options()
+                                options.inJustDecodeBounds = true
+                                android.graphics.BitmapFactory.decodeByteArray(art, 0, art.size, options)
+                                
+                                // ターゲットサイズ: 144x144 (48dp * 3 density)
+                                options.inSampleSize = calculateInSampleSize(options, 144, 144)
+                                options.inJustDecodeBounds = false
+                                
+                                val bitmap = android.graphics.BitmapFactory.decodeByteArray(art, 0, art.size, options)
                                 AlbumArtCache.put(song.uri.toString(), bitmap)
                                 albumArtBitmap = bitmap
                             }
