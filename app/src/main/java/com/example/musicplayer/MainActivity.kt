@@ -102,9 +102,9 @@ import java.io.File
 import java.util.Collections
 
 // --- アプリ情報 ---
-// v2.1.17: スクロールバー表示位置修正（上半分の追従問題解消）
-private const val APP_VERSION = "v2.1.17"
-private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v53"
+// v2.1.18: スクロールバーつまみ位置修正（TopEndから配置）
+private const val APP_VERSION = "v2.1.18"
+private const val GEMINI_MODEL_VERSION = "Final Build 2026-01-14 v54"
 
 // --- データ構造の定義 ---
 enum class SortType { DEFAULT, TITLE, ARTIST, ALBUM, PLAY_COUNT }
@@ -2655,10 +2655,10 @@ fun VerticalScrollbar(
                     )
                 }
         ) {
-            // 実際のバー（右端に表示）
+            // 実際のバー（右端に表示、上端から配置）
             Box(
                 modifier = Modifier
-                    .align(Alignment.CenterEnd)
+                    .align(Alignment.TopEnd)
                     .width(thumbWidth)
                     .height(thumbHeight)
                     .offset(y = thumbOffset)
