@@ -5,7 +5,8 @@ M3Uプレイリストの読み込みや、古いファイルでよくある文�
 
 ## スクリーンショット
 
-<img src="docs/images/screenshot_main.png" width="300" alt="メイン画面">
+<img src="https://github.com/user-attachments/assets/58e3fd7a-0b3f-41e3-87a1-1f5264d5daac" width="300"
+
 
 ## 主な機能
 
