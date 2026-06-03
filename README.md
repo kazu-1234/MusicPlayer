@@ -1,6 +1,7 @@
-# Music Player (Android)
+# Music Player (Android / Windows)
 
-Jetpack Composeを使って、ローカルファイルの再生にこだわって作ったAndroid向けの音楽プレイヤーアプリです。
+ローカルファイル再生にこだわった音楽プレイヤーです。  
+Android版（Jetpack Compose）に加えて、Windows版（WinUI 3 / Windows App SDK）も用意しています。  
 M3Uプレイリストの読み込みや、古いファイルでよくある文字化けの自動修復など、個人的に欲しかった機能を詰め込んでいます。
 
 ## スクリーンショット
@@ -44,6 +45,14 @@ Releasesページ (https://github.com/kazu-1234/MusicPlayer/releases) から最�
    `git clone https://github.com/kazu-1234/MusicPlayer.git`
 2. Android Studioでプロジェクトを開きます。
 3. Gradleの同期が終わったら、Runボタンを押して実機やエミュレータでビルドして実行してください。
+
+### Windows版 (WinUI 3) のビルド方法
+
+1. Visual Studio 2022 (17.10+) で **「.NET デスクトップ開発」** と **Windows App SDK / WinUI 3 関連ワークロード** を有効化します。
+2. `windows/MusicPlayer.Windows.slnx` を開きます。
+3. `MusicPlayer.WinUI` を起動プロジェクトにしてビルド・実行します。
+
+Windows版の実装場所: `windows/MusicPlayer.WinUI`
 
 ## 今後のアップデート予定 (TODO)
 
