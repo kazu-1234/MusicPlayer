@@ -1,0 +1,1 @@
+/tmp/workspace/kazu-1234/MusicPlayer/windows/MusicPlayer.WinUI/obj/Debug/net8.0-windows10.0.19041.0/MusicPlayer.WinUI.csproj.AssemblyReference.cache

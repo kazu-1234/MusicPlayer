@@ -1,0 +1,29 @@
+{
+  "version": 2,
+  "dgSpecHash": "fZeI1CHdp/I=",
+  "success": true,
+  "projectFilePath": "/tmp/workspace/kazu-1234/MusicPlayer/windows/MusicPlayer.WinUI/MusicPlayer.WinUI.csproj",
+  "expectedPackageFiles": [
+    "/tmp/codeql-scratch-6b32954e094e43dd/dbs/csharp/working/packages/microsoft.web.webview2/1.0.2651.64/microsoft.web.webview2.1.0.2651.64.nupkg.sha512",
+    "/tmp/codeql-scratch-6b32954e094e43dd/dbs/csharp/working/packages/microsoft.windows.sdk.buildtools/10.0.22621.756/microsoft.windows.sdk.buildtools.10.0.22621.756.nupkg.sha512",
+    "/tmp/codeql-scratch-6b32954e094e43dd/dbs/csharp/working/packages/microsoft.windowsappsdk/1.6.250205002/microsoft.windowsappsdk.1.6.250205002.nupkg.sha512",
+    "/tmp/codeql-scratch-6b32954e094e43dd/dbs/csharp/working/packages/microsoft.netcore.app.ref/8.0.27/microsoft.netcore.app.ref.8.0.27.nupkg.sha512",
+    "/tmp/codeql-scratch-6b32954e094e43dd/dbs/csharp/working/packages/microsoft.netcore.app.runtime.win-x86/8.0.27/microsoft.netcore.app.runtime.win-x86.8.0.27.nupkg.sha512",
+    "/tmp/codeql-scratch-6b32954e094e43dd/dbs/csharp/working/packages/microsoft.netcore.app.runtime.win-x64/8.0.27/microsoft.netcore.app.runtime.win-x64.8.0.27.nupkg.sha512",
+    "/tmp/codeql-scratch-6b32954e094e43dd/dbs/csharp/working/packages/microsoft.netcore.app.runtime.win-arm64/8.0.27/microsoft.netcore.app.runtime.win-arm64.8.0.27.nupkg.sha512",
+    "/tmp/codeql-scratch-6b32954e094e43dd/dbs/csharp/working/packages/microsoft.windowsdesktop.app.ref/8.0.27/microsoft.windowsdesktop.app.ref.8.0.27.nupkg.sha512",
+    "/tmp/codeql-scratch-6b32954e094e43dd/dbs/csharp/working/packages/microsoft.windowsdesktop.app.runtime.win-x86/8.0.27/microsoft.windowsdesktop.app.runtime.win-x86.8.0.27.nupkg.sha512",
+    "/tmp/codeql-scratch-6b32954e094e43dd/dbs/csharp/working/packages/microsoft.windowsdesktop.app.runtime.win-x64/8.0.27/microsoft.windowsdesktop.app.runtime.win-x64.8.0.27.nupkg.sha512",
+    "/tmp/codeql-scratch-6b32954e094e43dd/dbs/csharp/working/packages/microsoft.windowsdesktop.app.runtime.win-arm64/8.0.27/microsoft.windowsdesktop.app.runtime.win-arm64.8.0.27.nupkg.sha512",
+    "/tmp/codeql-scratch-6b32954e094e43dd/dbs/csharp/working/packages/microsoft.aspnetcore.app.ref/8.0.27/microsoft.aspnetcore.app.ref.8.0.27.nupkg.sha512",
+    "/tmp/codeql-scratch-6b32954e094e43dd/dbs/csharp/working/packages/microsoft.aspnetcore.app.runtime.win-x86/8.0.27/microsoft.aspnetcore.app.runtime.win-x86.8.0.27.nupkg.sha512",
+    "/tmp/codeql-scratch-6b32954e094e43dd/dbs/csharp/working/packages/microsoft.aspnetcore.app.runtime.win-x64/8.0.27/microsoft.aspnetcore.app.runtime.win-x64.8.0.27.nupkg.sha512",
+    "/tmp/codeql-scratch-6b32954e094e43dd/dbs/csharp/working/packages/microsoft.aspnetcore.app.runtime.win-arm64/8.0.27/microsoft.aspnetcore.app.runtime.win-arm64.8.0.27.nupkg.sha512",
+    "/tmp/codeql-scratch-6b32954e094e43dd/dbs/csharp/working/packages/microsoft.netcore.app.host.linux-x64/8.0.27/microsoft.netcore.app.host.linux-x64.8.0.27.nupkg.sha512",
+    "/tmp/codeql-scratch-6b32954e094e43dd/dbs/csharp/working/packages/microsoft.netcore.app.host.win-x86/8.0.27/microsoft.netcore.app.host.win-x86.8.0.27.nupkg.sha512",
+    "/tmp/codeql-scratch-6b32954e094e43dd/dbs/csharp/working/packages/microsoft.netcore.app.host.win-x64/8.0.27/microsoft.netcore.app.host.win-x64.8.0.27.nupkg.sha512",
+    "/tmp/codeql-scratch-6b32954e094e43dd/dbs/csharp/working/packages/microsoft.netcore.app.host.win-arm64/8.0.27/microsoft.netcore.app.host.win-arm64.8.0.27.nupkg.sha512",
+    "/tmp/codeql-scratch-6b32954e094e43dd/dbs/csharp/working/packages/microsoft.windows.sdk.net.ref/10.0.19041.57/microsoft.windows.sdk.net.ref.10.0.19041.57.nupkg.sha512"
+  ],
+  "logs": []
+}

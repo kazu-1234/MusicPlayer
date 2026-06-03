@@ -15,6 +15,8 @@ public sealed class PlaylistService
         var entries = await File.ReadAllLinesAsync(playlistPath, DetectEncoding(playlistPath));
         var playlistSongs = new List<Song>();
 
+        var playlistDirectory = System.IO.Path.GetDirectoryName(playlistPath) ?? Directory.GetCurrentDirectory();
+
         foreach (var raw in entries)
         {
             var line = raw.Trim();
@@ -23,7 +25,7 @@ public sealed class PlaylistService
                 continue;
             }
 
-            var normalized = NormalizePlaylistPath(line, basePath);
+            var normalized = NormalizePlaylistPath(line, basePath, playlistDirectory);
             var matched = FindSong(normalized, allSongs);
             if (matched is not null)
             {
@@ -51,7 +53,7 @@ public sealed class PlaylistService
         return songs.FirstOrDefault(s => string.Equals(System.IO.Path.GetFileName(s.Path), fileName, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static string NormalizePlaylistPath(string line, string basePath)
+    private static string NormalizePlaylistPath(string line, string basePath, string playlistDirectory)
     {
         var normalized = line.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
 
@@ -64,7 +66,9 @@ public sealed class PlaylistService
             }
         }
 
-        return Path.GetFullPath(normalized);
+        return Path.IsPathRooted(normalized)
+            ? Path.GetFullPath(normalized)
+            : Path.GetFullPath(Path.Combine(playlistDirectory, normalized));
     }
 
     private static Encoding DetectEncoding(string file)
