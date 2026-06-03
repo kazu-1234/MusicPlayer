@@ -54,3 +54,25 @@ Releasesページ (https://github.com/kazu-1234/MusicPlayer/releases) から最�
 ## ライセンス
 
 このプロジェクトは MIT License で公開しています。詳しい内容は LICENSE ファイルを確認してください。
+
+## Windows版 (WinUI 3)
+
+`windows/MusicPlayer.WinUI` に、Windows 11 向けの WinUI 3 版アプリを追加しました。
+
+### 実装した主な機能
+
+* ローカルフォルダの音楽ファイルスキャン（再帰）
+* 曲一覧表示・検索
+* 再生 / 一時停止 / 前へ / 次へ
+* シャッフル / リピート (OFF / ALL / ONE)
+* M3U / M3U8 プレイリスト読み込み
+* Windows パス用の M3Uベースパス指定
+* 再生キュー表示
+
+### ビルドと実行
+
+1. Windows 11 環境で Visual Studio 2022 を開きます。
+2. `windows/MusicPlayer.WinUI/MusicPlayer.WinUI.csproj` を開きます。
+3. `x64` と `Debug` を選び、実行します。
+
+> WinUI 3 は Windows 環境が必要なため、Linux/macOS では実行できません。
